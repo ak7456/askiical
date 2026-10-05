@@ -1,0 +1,920 @@
+'use strict';
+/* app.js — letter → cell coverage → tone field → unit ramp → canvas / SVG / TXT.
+
+   Pipeline
+   1. raster   : draw the letter on an offscreen canvas (S× supersampled per cell) and average alpha per cell.
+   2. tone     : shade the coverage (distance / gradient / radial / noise), add halo, edge, gamma, contrast, grain.
+   3. ramp     : every enabled unit (character or custom vector glyph) gets its measured ink density;
+                 auto mode picks the unit whose normalised density is closest to the cell tone and, within
+                 a "mix" tolerance, picks randomly among near-equal units — that is how custom glyphs blend in.
+   4. paint    : stamp units (or knock them out of filled cells) on canvas; the same op list feeds SVG/TXT. */
+
+const $ = (s, r = document) => r.querySelector(s);
+
+const LETTER_FONTS = [
+  'Bodoni Moda', 'Playfair Display', 'Instrument Serif', 'UnifrakturCook', 'Archivo Black', 'Major Mono Display',
+  'Noto Serif KR', 'Nanum Myeongjo', 'Gowun Batang', 'Black Han Sans', 'Do Hyeon',
+];
+const UNIT_FONTS = ['JetBrains Mono', 'IBM Plex Mono', 'Space Mono', 'VT323', 'Major Mono Display'];
+
+const CHARSETS = [
+  ['표준', ' .:-=+*#%@'],
+  ['긴 램프', " .'`^\",:;Il!i><~+_-?][}{1)(|/tfjrxnuvczXYUJCLQ0OZmwqpdbkhao*#MW&8%B@$"],
+  ['블라썸', ' .:+?$%S'],
+  ['스파스', ' .-/%HSOLT*+'],
+  ['이진', ' 01'],
+  ['블록', ' ░▒▓█'],
+  ['점', ' ·•●'],
+  ['한글', ' ㆍㅡㄱㄴㄷㅁㅂㅎ'],
+];
+
+const SHAPE_DEFAULTS = {
+  char: 'A', font: 'Bodoni Moda', weight: 700, italic: false, letterScale: 1, offsetX: 0, offsetY: 0,
+  cols: 72, ratio: '4:5', cellAspect: 1.5,
+  shade: 'distance', shadeDepth: 0.6, angle: 90, noiseScale: 7, blur: 3, halo: 0.15, edge: 0,
+  gamma: 1, contrast: 0, threshold: 0.08, grain: 0.08, invert: false,
+  rampMode: 'auto', mixTol: 0.08, variation: 0.06, sizeMode: 'fixed', unitScale: 1, seed: 7,
+  animate: false, flicker: 0.12, fps: 12,
+  renderMode: 'stamp', fg: '#ecebe4', bg: '#0b0b0a', glyphColorOn: false, glyphColor: '#5d7bff',
+  grid: false, gridColor: '#ffffff', gridAlpha: 0.08, bgUnit: '', bgAlpha: 0.22,
+  unitFont: 'JetBrains Mono',
+};
+
+const PRESETS = [
+  { id: 'signal', name: 'Signal', sw: ['#050505', '#e9e9e9'], units: ' .,:;i1tfLCG08@', glyphs: ['b-cross', 'b-box'],
+    set: { char: 'S', font: 'Bodoni Moda', weight: 800, italic: false, cols: 96, ratio: '4:5', cellAspect: 1.7, shade: 'noise', shadeDepth: 0.55,
+      noiseScale: 6, blur: 3, halo: 0.3, edge: 0.15, gamma: 1, contrast: 0.2, threshold: 0.06, grain: 0.12, mixTol: 0.07, variation: 0.08,
+      sizeMode: 'fixed', unitScale: 1, renderMode: 'stamp', fg: '#ececec', bg: '#050505', glyphColorOn: false, grid: false,
+      bgUnitGlyph: 'b-dot', bgAlpha: 0.16, unitFont: 'JetBrains Mono' } },
+  { id: 'blossom', name: 'Blossom', sw: ['#dccfc8', '#2b2626'], units: ' :.+?$%S', glyphs: ['b-petal'],
+    set: { char: '꽃', font: 'Nanum Myeongjo', weight: 800, italic: false, cols: 58, ratio: '3:4', cellAspect: 1.45, shade: 'distance', shadeDepth: 0.6,
+      blur: 1, halo: 0, edge: 0.1, gamma: 1, contrast: 0.1, threshold: 0.12, grain: 0.05, mixTol: 0.1, variation: 0.05,
+      sizeMode: 'fixed', unitScale: 1, renderMode: 'stamp', fg: '#2b2626', bg: '#dccfc8', glyphColorOn: false, grid: false,
+      bgUnitGlyph: '', unitFont: 'IBM Plex Mono' } },
+  { id: 'blueprint', name: 'Blueprint', sw: ['#1638d9', '#f2f2f2'], units: ' ', glyphs: ['b-box', 'b-cross', 'b-boxdot', 'b-dot', 'b-check', 'b-solid'],
+    set: { char: 'R', font: 'Archivo Black', weight: 400, italic: false, cols: 54, ratio: '3:4', cellAspect: 1, shade: 'noise', shadeDepth: 0.85,
+      noiseScale: 5, blur: 2, halo: 0, edge: 0.2, gamma: 1, contrast: 0.3, threshold: 0.3, grain: 0.05, mixTol: 0.1, variation: 0.1,
+      sizeMode: 'fixed', unitScale: 0.82, renderMode: 'knockout', fg: '#f2f2f2', bg: '#1638d9', glyphColorOn: false,
+      grid: true, gridColor: '#8aa0ff', gridAlpha: 0.35, bgUnitGlyph: '', unitFont: 'JetBrains Mono' } },
+  { id: 'halftone', name: 'Halftone', sw: ['#e8e6e6', '#e2392f'], units: '', glyphs: ['b-dot'],
+    set: { char: 'H', font: 'Playfair Display', weight: 900, italic: true, cols: 46, ratio: '1:1', cellAspect: 1, shade: 'gradient', shadeDepth: 0.85,
+      angle: 200, blur: 2, halo: 0.2, edge: 0, gamma: 0.9, contrast: 0, threshold: 0.05, grain: 0.04, mixTol: 0, variation: 0,
+      sizeMode: 'tone', unitScale: 1.05, renderMode: 'stamp', fg: '#e2392f', bg: '#e8e6e6', glyphColorOn: false, grid: false,
+      bgUnitGlyph: '', unitFont: 'JetBrains Mono' } },
+  { id: 'sparse', name: 'Organic', sw: ['#000000', '#cfcfcf'], units: ' .-/%HSOLT*+', glyphs: ['b-slash', 'b-spark'],
+    set: { char: 'W', font: 'UnifrakturCook', weight: 700, italic: false, cols: 120, ratio: '2:3', cellAspect: 1.7, shade: 'noise', shadeDepth: 0.9,
+      noiseScale: 9, blur: 2, halo: 0.1, edge: 0.45, gamma: 1.2, contrast: 0.4, threshold: 0.22, grain: 0.3, mixTol: 0.08, variation: 0.15,
+      sizeMode: 'fixed', unitScale: 1, renderMode: 'stamp', fg: '#cfcfcf', bg: '#000000', glyphColorOn: false, grid: false,
+      bgUnitGlyph: '', unitFont: 'Space Mono' } },
+];
+
+/* ---------- state */
+const STORE_KEY = 'askiical:v1';
+let state = makeDefaultState();
+
+function makeDefaultState() {
+  const s = { ...SHAPE_DEFAULTS, glyphs: AK.BUILTIN_GLYPHS.map(AK.normGlyph), units: [] };
+  s.units = [...' .:-=+*#%@'].map((c) => ({ id: AK.uid(), kind: 'char', value: c, on: true }));
+  s.units.push({ id: AK.uid(), kind: 'glyph', glyph: 'b-box', on: true }, { id: AK.uid(), kind: 'glyph', glyph: 'b-cross', on: true });
+  return s;
+}
+
+function loadStored() {
+  try {
+    const raw = localStorage.getItem(STORE_KEY);
+    if (raw) applyProject(JSON.parse(raw), true);
+  } catch (e) { /* storage unavailable or corrupt: keep defaults */ }
+}
+let saveTimer = 0;
+function persist() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    try { localStorage.setItem(STORE_KEY, JSON.stringify(projectJSON())); } catch (e) { /* ignore */ }
+  }, 400);
+}
+function projectJSON() {
+  const out = { app: 'askiical', version: 1 };
+  for (const k of Object.keys(SHAPE_DEFAULTS)) out[k] = state[k];
+  out.units = state.units;
+  out.glyphs = state.glyphs;
+  return out;
+}
+function applyProject(p, quiet) {
+  if (!p || typeof p !== 'object' || !Array.isArray(p.units)) throw new Error('askiical 프로젝트 JSON이 아닙니다.');
+  const s = { ...SHAPE_DEFAULTS };
+  for (const k of Object.keys(SHAPE_DEFAULTS)) if (k in p && typeof p[k] === typeof SHAPE_DEFAULTS[k]) s[k] = p[k];
+  s.glyphs = (Array.isArray(p.glyphs) ? p.glyphs : []).map(AK.normGlyph);
+  const ids = new Set(s.glyphs.map((g) => g.id));
+  s.units = p.units
+    .filter((u) => (u.kind === 'char' && typeof u.value === 'string' && u.value.length) || (u.kind === 'glyph' && ids.has(u.glyph)))
+    .map((u) => ({ id: u.id || AK.uid(), kind: u.kind, value: u.value, glyph: u.glyph, on: u.on !== false }));
+  if (s.bgUnit && !s.units.some((u) => u.id === s.bgUnit)) s.bgUnit = '';
+  state = s;
+  if (!quiet) afterStructuralChange();
+}
+
+/* ---------- derived helpers */
+const glyphById = (id) => state.glyphs.find((g) => g.id === id);
+const compiledCache = new Map(); // glyph id → { v, cg }
+function compiled(g) {
+  const c = compiledCache.get(g.id);
+  if (c && c.v === g.v) return c.cg;
+  const cg = AK.compileGlyph(g);
+  compiledCache.set(g.id, { v: g.v, cg });
+  return cg;
+}
+
+function dims() {
+  const [rw, rh] = state.ratio.split(':').map(Number);
+  const rows = Math.max(4, Math.round((state.cols * rh) / rw / state.cellAspect));
+  return { cols: state.cols, rows };
+}
+const letterFontSpec = (px) => `${state.italic ? 'italic ' : ''}${state.weight} ${px}px "${state.font}", serif`;
+const unitFontSpec = (px) => `${px}px "${state.unitFont}", ui-monospace, monospace`;
+const charPx = (cw, ch) => Math.min(ch * 0.92, cw / 0.6);
+
+/* ---------- font loading */
+const fontTried = new Set();
+function ensureFont(spec, text) {
+  let ok = true;
+  try { ok = document.fonts.check(spec, text); } catch (e) { return true; }
+  if (ok) return true;
+  const key = spec + '|' + text;
+  if (!fontTried.has(key)) {
+    fontTried.add(key);
+    document.fonts.load(spec, text).then(() => {
+      rasterKey = '';
+      densityCache.clear();
+      afterStructuralChange();
+    }).catch(() => {});
+  }
+  return false;
+}
+
+/* ---------- 1. raster */
+const rc = document.createElement('canvas');
+const rctx = rc.getContext('2d', { willReadFrequently: true });
+let rasterKey = '', coverage = null;
+const SS = 6;
+
+function raster() {
+  const { cols, rows } = dims();
+  const key = [state.char, state.font, state.weight, state.italic, state.letterScale, state.offsetX, state.offsetY, cols, rows, state.cellAspect].join('|');
+  if (key === rasterKey && coverage) return coverage;
+  ensureFont(letterFontSpec(100), state.char || 'A');
+  const W = cols * SS, H = Math.max(rows, Math.round(rows * state.cellAspect * SS));
+  rc.width = W; rc.height = H;
+  rctx.clearRect(0, 0, W, H);
+  const cov = new Float32Array(cols * rows);
+  const text = state.char;
+  if (text) {
+    rctx.textAlign = 'left';
+    rctx.textBaseline = 'alphabetic';
+    rctx.font = letterFontSpec(200);
+    const m = rctx.measureText(text);
+    const bw = m.actualBoundingBoxLeft + m.actualBoundingBoxRight;
+    const bh = m.actualBoundingBoxAscent + m.actualBoundingBoxDescent;
+    if (bw > 0 && bh > 0) {
+      const fit = Math.min((W * 0.84) / bw, (H * 0.84) / bh) * state.letterScale;
+      rctx.font = letterFontSpec(200 * fit);
+      const m2 = rctx.measureText(text);
+      const x = W / 2 - (m2.actualBoundingBoxRight - m2.actualBoundingBoxLeft) / 2 + state.offsetX * W;
+      const y = H / 2 + (m2.actualBoundingBoxAscent - m2.actualBoundingBoxDescent) / 2 + state.offsetY * H;
+      rctx.fillStyle = '#000';
+      rctx.fillText(text, x, y);
+      const data = rctx.getImageData(0, 0, W, H).data;
+      for (let r = 0; r < rows; r++) {
+        const y0 = Math.floor((r * H) / rows), y1 = Math.floor(((r + 1) * H) / rows);
+        for (let c = 0; c < cols; c++) {
+          const x0 = c * SS, x1 = x0 + SS;
+          let sum = 0;
+          for (let yy = y0; yy < y1; yy++) {
+            let p = (yy * W + x0) * 4 + 3;
+            for (let xx = x0; xx < x1; xx++, p += 4) sum += data[p];
+          }
+          cov[r * cols + c] = sum / (255 * (x1 - x0) * Math.max(1, y1 - y0));
+        }
+      }
+    }
+  }
+  rasterKey = key;
+  coverage = cov;
+  toneKey = '';
+  return cov;
+}
+
+/* ---------- 2. tone */
+let toneKey = '', tone = null;
+function computeTone() {
+  const cov = raster();
+  const { cols, rows } = dims();
+  const key = rasterKey + '|' + ['shade', 'shadeDepth', 'angle', 'noiseScale', 'blur', 'halo', 'edge', 'gamma', 'contrast', 'grain', 'invert', 'seed']
+    .map((k) => state[k]).join('|');
+  if (key === toneKey && tone) return tone;
+  const n = cols * rows;
+  const t = new Float32Array(n);
+  const needBlur = state.shade === 'distance' || state.halo > 0;
+  const b = needBlur ? AK.blur(cov, cols, rows, state.blur) : null;
+  const depth = state.shadeDepth;
+  const ang = (state.angle * Math.PI) / 180, ca = Math.cos(ang), sa = Math.sin(ang);
+  const physH = rows * state.cellAspect, physMax = Math.max(cols, physH);
+  const ns = state.noiseScale;
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const i = r * cols + c;
+      const m = cov[i];
+      // physical coordinates in [-0.5, 0.5] of the longer side
+      const px = (c + 0.5 - cols / 2) / physMax, py = ((r + 0.5) * state.cellAspect - physH / 2) / physMax;
+      let u = 1;
+      switch (state.shade) {
+        case 'distance': u = AK.clamp((b[i] - 0.5) * 2); break;
+        case 'gradient': u = AK.clamp(px * ca + py * sa + 0.5); break;
+        case 'radial': u = AK.clamp(1 - Math.hypot(px, py) * 2); break;
+        case 'noise': u = AK.fbm((px + 0.5) * ns, (py + 0.5) * ns, state.seed); break;
+      }
+      const shade = state.shade === 'solid' ? 1 : 1 - depth + depth * u;
+      let v = m * shade;
+      if (state.halo > 0) v += (1 - m) * state.halo * Math.min(1, b[i] * 2);
+      if (state.edge > 0) {
+        const L = c > 0 ? cov[i - 1] : 0, Rr = c < cols - 1 ? cov[i + 1] : 0;
+        const U = r > 0 ? cov[i - cols] : 0, D = r < rows - 1 ? cov[i + cols] : 0;
+        const e = AK.clamp(Math.hypot(Rr - L, D - U));
+        v = v * (1 - state.edge) + e * state.edge;
+      }
+      if (state.invert) v = 1 - v;
+      v = AK.clamp((v - 0.5) * (1 + state.contrast) + 0.5);
+      v = Math.pow(v, state.gamma);
+      if (state.grain > 0) v = AK.clamp(v + (AK.hash(c, r, state.seed * 31 + 5) - 0.5) * state.grain);
+      t[i] = v;
+    }
+  }
+  toneKey = key;
+  tone = t;
+  return t;
+}
+
+/* ---------- 3. units & ramp */
+const dcan = document.createElement('canvas');
+const dctx = dcan.getContext('2d', { willReadFrequently: true });
+const densityCache = new Map();
+const unitKey = (u) => (u.kind === 'char' ? 'c:' + u.value : 'g:' + u.glyph + ':' + (glyphById(u.glyph) || {}).v);
+
+function measure(u) {
+  const key = u._g ? '' : unitKey(u) + '|' + state.unitFont + '|' + state.cellAspect; // unsaved editor glyphs skip the cache
+  if (key && densityCache.has(key)) return densityCache.get(key);
+  const cw = 40, ch = Math.round(40 * state.cellAspect);
+  dcan.width = cw; dcan.height = ch;
+  dctx.clearRect(0, 0, cw, ch);
+  dctx.fillStyle = '#000'; dctx.strokeStyle = '#000';
+  dctx.font = unitFontSpec(charPx(cw, ch));
+  dctx.textAlign = 'center'; dctx.textBaseline = 'middle';
+  drawUnit(dctx, u, cw / 2, ch / 2, cw, ch, 1, 1, 1);
+  dctx.setTransform(1, 0, 0, 1, 0, 0);
+  const d = dctx.getImageData(0, 0, cw, ch).data;
+  let sum = 0;
+  for (let i = 3; i < d.length; i += 4) sum += d[i];
+  const v = sum / (255 * cw * ch);
+  if (key) densityCache.set(key, v);
+  return v;
+}
+function measureGlyph(g) {
+  return measure({ kind: 'glyph', glyph: g.id, _g: g });
+}
+
+function drawUnit(ctx, u, x, y, cw, ch, k, px, unitScale) {
+  if (u.kind === 'char') {
+    if (u.value === ' ') return;
+    ctx.setTransform(px * k, 0, 0, px * k, px * x, px * y);
+    ctx.fillText(u.value, 0, 0);
+    return;
+  }
+  const g = u._g || glyphById(u.glyph);
+  if (!g) return;
+  const s = (Math.min(cw, ch) * unitScale * k) / 100;
+  ctx.setTransform(px * s, 0, 0, px * s, px * (x - 50 * s), px * (y - 50 * s));
+  AK.drawGlyph(ctx, u._g ? AK.compileGlyph(g) : compiled(g));
+}
+
+function ramp() {
+  const on = state.units.filter((u) => u.on && (u.kind === 'char' || glyphById(u.glyph)));
+  if (on.some((u) => u.kind === 'char')) ensureFont(unitFontSpec(20), on.filter((u) => u.kind === 'char').map((u) => u.value).join(''));
+  const items = on.map((u) => ({ u, d: measure(u) }));
+  if (!items.length) return [];
+  let lo = Infinity, hi = -Infinity;
+  for (const it of items) { lo = Math.min(lo, it.d); hi = Math.max(hi, it.d); }
+  const span = hi - lo;
+  for (const it of items) it.nd = span > 1e-6 ? (it.d - lo) / span : 1;
+  if (state.rampMode === 'auto') items.sort((a, b) => a.nd - b.nd);
+  return items;
+}
+
+function pickUnit(items, t, h) {
+  if (state.rampMode === 'manual') return items[Math.min(items.length - 1, Math.floor(t * items.length))].u;
+  let best = Infinity;
+  for (const it of items) { const d = Math.abs(it.nd - t); if (d < best) best = d; }
+  const lim = best + state.mixTol + 1e-6;
+  let n = 0;
+  for (const it of items) if (Math.abs(it.nd - t) <= lim) n++;
+  let pick = Math.floor(h * n);
+  for (const it of items) if (Math.abs(it.nd - t) <= lim && pick-- === 0) return it.u;
+  return items[items.length - 1].u;
+}
+
+/* build draw ops: { c, r, u, k, a, col, box } */
+function buildOps(frame) {
+  const t = computeTone();
+  const { cols, rows } = dims();
+  const items = ramp();
+  const bgU = state.bgUnit ? state.units.find((u) => u.id === state.bgUnit) : null;
+  const thr = state.threshold;
+  const knock = state.renderMode === 'knockout';
+  const ops = [];
+  let custom = 0;
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const v = t[r * cols + c];
+      if (v < thr || !items.length) {
+        if (bgU) ops.push({ c, r, u: bgU, k: 1, a: state.bgAlpha, col: state.fg });
+        continue;
+      }
+      let s = state.seed;
+      if (state.animate && AK.hash(c, r, frame * 7 + 1) < state.flicker) s += frame + 1;
+      let tt = (v - thr) / (1 - thr || 1);
+      if (state.variation) tt = AK.clamp(tt + (AK.hash(c, r, s * 13 + 11) - 0.5) * 2 * state.variation);
+      const u = pickUnit(items, knock ? 1 - tt : tt, AK.hash(c, r, s));
+      const isG = u.kind === 'glyph';
+      if (isG) custom++;
+      const k = state.sizeMode === 'tone' && !knock ? Math.max(0.12, Math.round(Math.sqrt(tt) * 20) / 20) : 1;
+      const col = knock ? state.bg : isG && state.glyphColorOn ? state.glyphColor : state.fg;
+      ops.push({ c, r, u, k, a: 1, col, box: knock });
+    }
+  }
+  ops.custom = custom;
+  return ops;
+}
+
+/* ---------- 4. paint */
+function paint(ctx, W, H, ops, px) {
+  const { cols, rows } = dims();
+  const cw = W / cols, ch = H / rows;
+  ctx.setTransform(px, 0, 0, px, 0, 0);
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = state.bg;
+  ctx.fillRect(0, 0, W, H);
+  if (state.grid) {
+    ctx.strokeStyle = state.gridColor;
+    ctx.globalAlpha = state.gridAlpha;
+    ctx.lineWidth = Math.max(1 / px, Math.min(cw, ch) * 0.04);
+    ctx.beginPath();
+    for (let c = 0; c <= cols; c++) { ctx.moveTo(c * cw, 0); ctx.lineTo(c * cw, H); }
+    for (let r = 0; r <= rows; r++) { ctx.moveTo(0, r * ch); ctx.lineTo(W, r * ch); }
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+  ctx.font = unitFontSpec(charPx(cw, ch) * state.unitScale);
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  let col = null;
+  const inset = state.grid ? Math.min(cw, ch) * 0.06 : 0;
+  for (const op of ops) {
+    if (op.box) {
+      ctx.setTransform(px, 0, 0, px, 0, 0);
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = state.fg;
+      col = null;
+      ctx.fillRect(op.c * cw + inset, op.r * ch + inset, cw - inset * 2 + (inset ? 0 : 0.5), ch - inset * 2 + (inset ? 0 : 0.5));
+    }
+    if (op.col !== col) { col = op.col; ctx.fillStyle = col; ctx.strokeStyle = col; }
+    ctx.globalAlpha = op.a;
+    drawUnit(ctx, op.u, (op.c + 0.5) * cw, (op.r + 0.5) * ch, cw, ch, op.k, px, state.unitScale);
+  }
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalAlpha = 1;
+}
+
+/* ---------- view */
+const view = $('#view');
+const vctx = view.getContext('2d');
+const stage = $('#stage');
+let frame = 0, lastOps = null, rafId = 0, animTimer = 0;
+
+function artSize() {
+  const { cols, rows } = dims();
+  return { aw: cols, ah: rows * state.cellAspect };
+}
+
+function renderNow() {
+  rafId = 0;
+  const { aw, ah } = artSize();
+  const sr = stage.getBoundingClientRect();
+  const cs = getComputedStyle(stage);
+  const availW = sr.width - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+  const availH = sr.height - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
+  const scale = Math.max(0.1, Math.min(availW / aw, availH / ah));
+  const W = Math.floor(aw * scale), H = Math.floor(ah * scale);
+  const dpr = Math.min(3, window.devicePixelRatio || 1);
+  if (view.width !== Math.round(W * dpr) || view.height !== Math.round(H * dpr)) {
+    view.width = Math.round(W * dpr); view.height = Math.round(H * dpr);
+  }
+  view.style.width = W + 'px'; view.style.height = H + 'px';
+  lastOps = buildOps(frame);
+  paint(vctx, W, H, lastOps, dpr);
+  const { cols, rows } = dims();
+  const bgCount = lastOps.filter((o) => o.a < 1).length;
+  $('#info').textContent = `${cols} × ${rows} 셀 · 유닛 ${(lastOps.length - bgCount).toLocaleString()} · 커스텀 글리프 ${lastOps.custom.toLocaleString()}`;
+}
+function requestRender() { if (!rafId) rafId = requestAnimationFrame(renderNow); }
+new ResizeObserver(requestRender).observe(stage);
+
+function syncAnimation() {
+  clearInterval(animTimer);
+  const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (state.animate && !reduce) animTimer = setInterval(() => { frame++; requestRender(); }, 1000 / state.fps);
+}
+
+/* ---------- controls schema */
+const opt = (pairs) => pairs.map(([v, l]) => [v, l]);
+const SECTIONS = [
+  { title: '글자', en: 'SOURCE', items: [
+    { k: 'char', t: 'text', label: '글자 (한 글자, 최대 4자)' },
+    { k: 'font', t: 'select', label: '서체', options: () => LETTER_FONTS.map((f) => [f, f]) },
+    { k: 'weight', t: 'range', label: '굵기', min: 100, max: 900, step: 100 },
+    { k: 'italic', t: 'check', label: '이탤릭' },
+    { k: 'letterScale', t: 'range', label: '글자 크기', min: 0.3, max: 1.8, step: 0.01 },
+    { k: 'offsetX', t: 'range', label: '가로 위치', min: -0.5, max: 0.5, step: 0.01 },
+    { k: 'offsetY', t: 'range', label: '세로 위치', min: -0.5, max: 0.5, step: 0.01 },
+    { id: 'font-file', t: 'file', label: '서체 파일 올리기 (.ttf .otf .woff2)', accept: '.ttf,.otf,.woff,.woff2' },
+  ] },
+  { title: '그리드', en: 'GRID', items: [
+    { k: 'cols', t: 'range', label: '가로 셀 수', min: 12, max: 200, step: 1 },
+    { k: 'ratio', t: 'select', label: '아트보드 비율', options: () => opt([['1:1', '1:1 정사각'], ['4:5', '4:5'], ['3:4', '3:4'], ['2:3', '2:3 포스터'], ['1:1.414', 'A 판형'], ['16:9', '16:9']]) },
+    { k: 'cellAspect', t: 'range', label: '셀 세로 비 (높이 ÷ 너비)', min: 0.6, max: 2.4, step: 0.05 },
+  ] },
+  { title: '톤', en: 'TONE', items: [
+    { k: 'shade', t: 'select', label: '안쪽 음영', options: () => opt([['solid', '단색'], ['distance', '외곽에서 안쪽으로'], ['gradient', '직선 그라디언트'], ['radial', '원형 그라디언트'], ['noise', '노이즈']]) },
+    { k: 'shadeDepth', t: 'range', label: '음영 깊이', min: 0, max: 1, step: 0.01, when: (s) => s.shade !== 'solid' },
+    { k: 'angle', t: 'range', label: '그라디언트 각도', min: 0, max: 360, step: 1, when: (s) => s.shade === 'gradient' },
+    { k: 'noiseScale', t: 'range', label: '노이즈 크기', min: 1, max: 24, step: 0.5, when: (s) => s.shade === 'noise' },
+    { k: 'blur', t: 'range', label: '번짐 반경 (셀)', min: 1, max: 12, step: 1 },
+    { k: 'halo', t: 'range', label: '바깥 광채', min: 0, max: 1, step: 0.01 },
+    { k: 'edge', t: 'range', label: '윤곽 강조', min: 0, max: 1, step: 0.01 },
+    { k: 'gamma', t: 'range', label: '감마', min: 0.3, max: 3, step: 0.05 },
+    { k: 'contrast', t: 'range', label: '대비', min: -0.8, max: 2, step: 0.05 },
+    { k: 'threshold', t: 'range', label: '비움 임계값', min: 0, max: 0.95, step: 0.01 },
+    { k: 'grain', t: 'range', label: '그레인', min: 0, max: 1, step: 0.01 },
+    { k: 'invert', t: 'check', label: '반전 (글자 바깥을 채움)' },
+  ] },
+  { title: '매핑', en: 'MAPPING', items: [
+    { k: 'rampMode', t: 'select', label: '램프', options: () => opt([['auto', '자동 (잉크 밀도 순)'], ['manual', '수동 (유닛 칩 순서)']]) },
+    { k: 'mixTol', t: 'range', label: '혼합 폭 (비슷한 밀도끼리 섞기)', min: 0, max: 0.4, step: 0.01, when: (s) => s.rampMode === 'auto' },
+    { k: 'variation', t: 'range', label: '무작위 흔들림', min: 0, max: 0.5, step: 0.01 },
+    { k: 'sizeMode', t: 'select', label: '유닛 크기', options: () => opt([['fixed', '고정'], ['tone', '톤에 따라 (하프톤)']]) },
+    { k: 'unitScale', t: 'range', label: '유닛 배율', min: 0.3, max: 1.8, step: 0.01 },
+    { k: 'seed', t: 'range', label: '시드', min: 0, max: 999, step: 1 },
+    { k: 'animate', t: 'check', label: '신호 깜빡임 애니메이션' },
+    { k: 'flicker', t: 'range', label: '깜빡이는 셀 비율', min: 0.01, max: 1, step: 0.01, when: (s) => s.animate },
+    { k: 'fps', t: 'range', label: '속도 (fps)', min: 2, max: 30, step: 1, when: (s) => s.animate },
+  ] },
+  { title: '색', en: 'COLOR', items: [
+    { k: 'renderMode', t: 'select', label: '찍는 방식', options: () => opt([['stamp', '스탬프 (유닛을 찍음)'], ['knockout', '녹아웃 (칸을 채우고 유닛을 뺌)']]) },
+    { k: 'fg', t: 'color', label: '유닛 색' },
+    { k: 'bg', t: 'color', label: '배경 색' },
+    { k: 'glyphColorOn', t: 'check', label: '커스텀 글리프만 다른 색' },
+    { k: 'glyphColor', t: 'color', label: '커스텀 글리프 색', when: (s) => s.glyphColorOn },
+    { k: 'grid', t: 'check', label: '격자선' },
+    { k: 'gridColor', t: 'color', label: '격자선 색', when: (s) => s.grid },
+    { k: 'gridAlpha', t: 'range', label: '격자선 농도', min: 0.02, max: 1, step: 0.01, when: (s) => s.grid },
+    { k: 'bgUnit', t: 'select', label: '빈 칸 배경 유닛', options: bgUnitOptions },
+    { k: 'bgAlpha', t: 'range', label: '배경 유닛 농도', min: 0.02, max: 1, step: 0.01, when: (s) => !!s.bgUnit },
+  ] },
+];
+const ALL_ITEMS = SECTIONS.flatMap((s) => s.items);
+
+function bgUnitOptions() {
+  return [['', '없음']].concat(state.units.map((u) => [u.id, u.kind === 'char' ? `문자 “${u.value === ' ' ? '␠' : u.value}”` : `글리프 · ${(glyphById(u.glyph) || {}).name}`]));
+}
+
+const fmt = (it, v) => {
+  const dec = String(it.step).split('.')[1];
+  return dec ? Number(v).toFixed(dec.length) : String(v);
+};
+
+function buildControls() {
+  const host = $('#controls');
+  host.innerHTML = '';
+  for (const sec of SECTIONS) {
+    const el = document.createElement('section');
+    el.className = 'ctl-sec';
+    el.innerHTML = `<h3><span>${sec.title}</span><em>${sec.en}</em></h3>`;
+    for (const it of sec.items) {
+      const row = document.createElement('div');
+      row.className = 'ctl ctl-' + it.t;
+      const id = 'c-' + (it.k || it.id);
+      it.row = row;
+      if (it.t === 'range') {
+        row.innerHTML = `<label for="${id}">${it.label}</label><output id="${id}-o" for="${id}"></output><input type="range" id="${id}" min="${it.min}" max="${it.max}" step="${it.step}">`;
+        it.input = row.querySelector('input'); it.out = row.querySelector('output');
+        it.input.addEventListener('input', () => { set(it.k, +it.input.value); it.out.textContent = fmt(it, it.input.value); });
+      } else if (it.t === 'select') {
+        row.innerHTML = `<label for="${id}">${it.label}</label><select id="${id}"></select>`;
+        it.input = row.querySelector('select');
+        it.input.addEventListener('change', () => set(it.k, it.input.value));
+      } else if (it.t === 'check') {
+        row.innerHTML = `<label class="chk"><input type="checkbox" id="${id}"> <span>${it.label}</span></label>`;
+        it.input = row.querySelector('input');
+        it.input.addEventListener('change', () => set(it.k, it.input.checked));
+      } else if (it.t === 'color') {
+        row.innerHTML = `<label for="${id}">${it.label}</label><input type="color" id="${id}">`;
+        it.input = row.querySelector('input');
+        it.input.addEventListener('input', () => set(it.k, it.input.value));
+      } else if (it.t === 'text') {
+        row.innerHTML = `<label for="${id}">${it.label}</label><input type="text" id="${id}" maxlength="8" autocomplete="off">`;
+        it.input = row.querySelector('input');
+        it.input.addEventListener('input', () => set(it.k, [...it.input.value].slice(0, 4).join('')));
+      } else if (it.t === 'file') {
+        row.innerHTML = `<label class="btn" for="${id}">${it.label}</label><input type="file" id="${id}" accept="${it.accept}" hidden>`;
+        row.querySelector('input').addEventListener('change', onFontFile);
+      }
+      el.appendChild(row);
+    }
+    host.appendChild(el);
+  }
+}
+
+function fillSelect(it) {
+  const cur = state[it.k];
+  it.input.innerHTML = it.options().map(([v, l]) => `<option value="${AK.esc(v)}">${AK.esc(l)}</option>`).join('');
+  it.input.value = cur;
+}
+
+function syncControls() {
+  for (const it of ALL_ITEMS) {
+    if (!it.k) continue;
+    const v = state[it.k];
+    if (it.t === 'select') fillSelect(it);
+    else if (it.t === 'check') it.input.checked = !!v;
+    else if (it.t === 'range') { it.input.value = v; it.out.textContent = fmt(it, v); }
+    else if (it.input !== document.activeElement) it.input.value = v;
+  }
+  syncVisibility();
+  const uf = $('#unit-font');
+  uf.innerHTML = UNIT_FONTS.map((f) => `<option>${AK.esc(f)}</option>`).join('');
+  uf.value = state.unitFont;
+}
+function syncVisibility() {
+  for (const it of ALL_ITEMS) if (it.when) it.row.hidden = !it.when(state);
+}
+
+const LAYOUT_KEYS = new Set(['cols', 'ratio', 'cellAspect']);
+function set(k, v) {
+  state[k] = v;
+  if (k === 'cellAspect') densityCache.clear();
+  if (k === 'animate' || k === 'fps') syncAnimation();
+  syncVisibility();
+  if (LAYOUT_KEYS.has(k) || k === 'unitFont') renderRamp();
+  persist();
+  requestRender();
+}
+
+async function onFontFile(e) {
+  const f = e.target.files[0];
+  e.target.value = '';
+  if (!f) return;
+  try {
+    const name = 'User ' + f.name.replace(/\.[^.]+$/, '').slice(0, 24);
+    const face = new FontFace(name, await f.arrayBuffer());
+    await face.load();
+    document.fonts.add(face);
+    if (!LETTER_FONTS.includes(name)) LETTER_FONTS.push(name);
+    if (!UNIT_FONTS.includes(name)) UNIT_FONTS.push(name);
+    state.font = name;
+    rasterKey = '';
+    syncControls();
+    persist();
+    requestRender();
+    toast(`서체 “${name}”을 불러왔습니다. 이 서체는 새로고침하면 다시 올려야 합니다.`);
+  } catch (err) {
+    toast('서체 파일을 읽지 못했습니다. TTF, OTF, WOFF, WOFF2 파일인지 확인하세요.');
+  }
+}
+
+/* ---------- units panel */
+function unitFace(u) {
+  if (u.kind === 'char') return `<span>${AK.esc(u.value === ' ' ? '␠' : u.value)}</span>`;
+  return '<canvas width="52" height="52"></canvas>';
+}
+function drawGlyphThumb(cv, g, fg) {
+  const c = cv.getContext('2d');
+  c.setTransform(1, 0, 0, 1, 0, 0);
+  c.clearRect(0, 0, cv.width, cv.height);
+  const s = cv.width / 100;
+  c.setTransform(s * 0.86, 0, 0, s * 0.86, cv.width * 0.07, cv.height * 0.07);
+  c.fillStyle = fg; c.strokeStyle = fg;
+  AK.drawGlyph(c, compiled(g));
+  c.setTransform(1, 0, 0, 1, 0, 0);
+}
+
+let dragFrom = -1;
+function renderUnits() {
+  const host = $('#unit-list');
+  host.style.setProperty('--unit-font', `"${state.unitFont}", ui-monospace, monospace`);
+  host.innerHTML = '';
+  const text = getComputedStyle(document.documentElement).getPropertyValue('--text').trim() || '#e8e6dd';
+  state.units.forEach((u, i) => {
+    const g = u.kind === 'glyph' ? glyphById(u.glyph) : null;
+    if (u.kind === 'glyph' && !g) return;
+    const chip = document.createElement('div');
+    chip.className = 'chip' + (u.on ? '' : ' off') + (g ? ' is-glyph' : '');
+    chip.draggable = true;
+    const label = g ? `글리프 ${g.name}` : `문자 ${u.value === ' ' ? '공백' : u.value}`;
+    chip.innerHTML = `<button type="button" class="chip-face" aria-pressed="${u.on}" title="${AK.esc(label)} 켜기/끄기">${unitFace(u)}</button>` +
+      `<span class="chip-d">${Math.round(measure(u) * 100)}%</span>` +
+      `<button type="button" class="chip-x" aria-label="${AK.esc(label)} 삭제">×</button>`;
+    if (g) drawGlyphThumb(chip.querySelector('canvas'), g, text);
+    chip.querySelector('.chip-face').onclick = () => { u.on = !u.on; afterUnitsChange(); };
+    chip.querySelector('.chip-x').onclick = () => {
+      state.units.splice(i, 1);
+      if (state.bgUnit === u.id) state.bgUnit = '';
+      afterUnitsChange();
+    };
+    chip.addEventListener('dragstart', (e) => { dragFrom = i; chip.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; });
+    chip.addEventListener('dragend', () => { dragFrom = -1; chip.classList.remove('dragging'); });
+    chip.addEventListener('dragover', (e) => { e.preventDefault(); chip.classList.add('drop'); });
+    chip.addEventListener('dragleave', () => chip.classList.remove('drop'));
+    chip.addEventListener('drop', (e) => {
+      e.preventDefault();
+      if (dragFrom < 0 || dragFrom === i) return;
+      const [m] = state.units.splice(dragFrom, 1);
+      state.units.splice(i, 0, m);
+      afterUnitsChange();
+    });
+    host.appendChild(chip);
+  });
+}
+
+function renderRamp() {
+  const cv = $('#ramp');
+  const r = cv.getBoundingClientRect();
+  if (!r.width) return;
+  const dpr = window.devicePixelRatio || 1;
+  cv.width = Math.round(r.width * dpr); cv.height = Math.round(r.height * dpr);
+  const c = cv.getContext('2d');
+  const items = ramp();
+  c.setTransform(dpr, 0, 0, dpr, 0, 0);
+  c.fillStyle = state.bg; c.fillRect(0, 0, r.width, r.height);
+  const note = $('#ramp-note');
+  if (!items.length) { note.textContent = '켜진 유닛이 없습니다. 유닛 칩을 하나 이상 켜세요.'; return; }
+  const n = items.length;
+  const cw = Math.min(r.width / n, (r.height - 14) / state.cellAspect);
+  const ch = cw * state.cellAspect;
+  c.font = unitFontSpec(charPx(cw, ch));
+  c.textAlign = 'center'; c.textBaseline = 'middle';
+  const x0 = (r.width - cw * n) / 2;
+  items.forEach((it, i) => {
+    const col = it.u.kind === 'glyph' && state.glyphColorOn ? state.glyphColor : state.fg;
+    c.fillStyle = col; c.strokeStyle = col;
+    drawUnit(c, it.u, x0 + (i + 0.5) * cw, ch / 2 + 2, cw, ch, 1, dpr, 1);
+    c.setTransform(dpr, 0, 0, dpr, 0, 0);
+  });
+  // density axis
+  c.fillStyle = state.fg; c.globalAlpha = 0.5;
+  items.forEach((it, i) => c.fillRect(x0 + i * cw + 1, r.height - 4, Math.max(1, (cw - 2) * it.nd), 2));
+  c.globalAlpha = 1;
+  const glyphs = items.filter((it) => it.u.kind === 'glyph').length;
+  note.textContent = state.rampMode === 'auto'
+    ? `왼쪽이 밝은 톤, 오른쪽이 짙은 톤입니다. 유닛 ${n}개 중 커스텀 글리프 ${glyphs}개가 밀도 순서에 섞여 있습니다.`
+    : `수동 램프: 칩 순서대로 밝은 톤 → 짙은 톤에 배정합니다. 유닛 ${n}개.`;
+}
+
+function renderGlyphLib() {
+  const host = $('#glyph-lib');
+  host.innerHTML = '';
+  const text = getComputedStyle(document.documentElement).getPropertyValue('--text').trim() || '#e8e6dd';
+  for (const g of state.glyphs) {
+    const used = state.units.some((u) => u.kind === 'glyph' && u.glyph === g.id);
+    const card = document.createElement('div');
+    card.className = 'gcard' + (used ? ' used' : '');
+    card.innerHTML = `<canvas width="80" height="80"></canvas><span class="gname">${AK.esc(g.name)}</span>` +
+      `<span class="gd">잉크 ${Math.round(measureGlyph(g) * 100)}%</span>` +
+      `<div class="row-btns"><button type="button" data-a="use">${used ? '빼기' : '유닛 +'}</button><button type="button" data-a="edit">편집</button></div>`;
+    drawGlyphThumb(card.querySelector('canvas'), g, text);
+    card.querySelector('[data-a="use"]').onclick = () => {
+      if (used) {
+        state.units = state.units.filter((u) => !(u.kind === 'glyph' && u.glyph === g.id));
+        if (state.bgUnit && !state.units.some((u) => u.id === state.bgUnit)) state.bgUnit = '';
+      } else state.units.push({ id: AK.uid(), kind: 'glyph', glyph: g.id, on: true });
+      afterUnitsChange();
+    };
+    card.querySelector('[data-a="edit"]').onclick = () => openEditor(g, false);
+    host.appendChild(card);
+  }
+}
+
+function afterUnitsChange() {
+  renderUnits();
+  renderGlyphLib();
+  renderRamp();
+  const bgItem = ALL_ITEMS.find((i) => i.k === 'bgUnit');
+  fillSelect(bgItem);
+  syncVisibility();
+  persist();
+  requestRender();
+}
+function afterStructuralChange() {
+  syncControls();
+  syncAnimation();
+  afterUnitsChange();
+}
+
+$('#unit-font').onchange = (e) => { set('unitFont', e.target.value); renderUnits(); };
+$('#add-chars').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const inp = $('#add-chars-input');
+  const have = new Set(state.units.filter((u) => u.kind === 'char').map((u) => u.value));
+  let added = 0;
+  for (const ch of new Set([...inp.value])) {
+    if (have.has(ch)) continue;
+    state.units.push({ id: AK.uid(), kind: 'char', value: ch, on: true });
+    added++;
+  }
+  inp.value = '';
+  if (added) afterUnitsChange();
+});
+$('#charsets').innerHTML = CHARSETS.map(([n, s], i) => `<button type="button" data-i="${i}" title="문자 유닛을 “${AK.esc(s)}”로 교체 (글리프는 유지)">${AK.esc(n)}</button>`).join('');
+$('#charsets').onclick = (e) => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  const chars = CHARSETS[+b.dataset.i][1];
+  const glyphUnits = state.units.filter((u) => u.kind === 'glyph');
+  state.units = [...new Set([...chars])].map((c) => ({ id: AK.uid(), kind: 'char', value: c, on: true })).concat(glyphUnits);
+  if (state.bgUnit && !state.units.some((u) => u.id === state.bgUnit)) state.bgUnit = '';
+  afterUnitsChange();
+};
+
+/* ---------- glyph editor bridge */
+function openEditor(g, isNew) {
+  GlyphEditor.open(g, {
+    isNew,
+    fg: state.fg === state.bg ? '#ffffff' : state.fg,
+    bg: state.bg,
+    measure: (gg) => measure({ kind: 'glyph', glyph: gg.id, _g: gg }),
+    onSave: (ng) => {
+      const i = state.glyphs.findIndex((x) => x.id === ng.id);
+      if (i >= 0) state.glyphs[i] = ng; else state.glyphs.push(ng);
+      if (isNew) state.units.push({ id: AK.uid(), kind: 'glyph', glyph: ng.id, on: true });
+      afterUnitsChange();
+      toast(isNew ? `글리프 “${ng.name}”를 만들고 유닛에 넣었습니다.` : `글리프 “${ng.name}”를 저장했습니다.`);
+    },
+    onDelete: (id) => {
+      const g0 = glyphById(id);
+      state.glyphs = state.glyphs.filter((x) => x.id !== id);
+      state.units = state.units.filter((u) => !(u.kind === 'glyph' && u.glyph === id));
+      if (state.bgUnit && !state.units.some((u) => u.id === state.bgUnit)) state.bgUnit = '';
+      afterUnitsChange();
+      toast(`글리프 “${g0 ? g0.name : ''}”를 삭제했습니다.`);
+    },
+  });
+}
+$('#new-glyph').onclick = () => openEditor({ name: '새 글리프 ' + (state.glyphs.length + 1), grid: 16 }, true);
+$('#svg-import').onchange = async (e) => {
+  const f = e.target.files[0];
+  e.target.value = '';
+  if (!f) return;
+  try {
+    const r = AK.importSVG(await f.text());
+    openEditor({ name: f.name.replace(/\.svg$/i, '').slice(0, 24), shapes: r.shapes, rule: r.rule, grid: 16 }, true);
+  } catch (err) { toast(err.message); }
+};
+
+/* ---------- presets */
+function applyPreset(p) {
+  const keepGlyphs = state.glyphs;
+  for (const id of p.glyphs) {
+    if (!keepGlyphs.some((g) => g.id === id)) {
+      const b = AK.BUILTIN_GLYPHS.find((x) => x.id === id);
+      if (b) keepGlyphs.push(AK.normGlyph(b));
+    }
+  }
+  const s = { ...SHAPE_DEFAULTS, ...p.set };
+  delete s.bgUnitGlyph;
+  s.glyphs = keepGlyphs;
+  s.units = [...new Set([...p.units])].map((c) => ({ id: AK.uid(), kind: 'char', value: c, on: true }))
+    .concat(p.glyphs.map((id) => ({ id: AK.uid(), kind: 'glyph', glyph: id, on: true })));
+  s.bgUnit = '';
+  if (p.set.bgUnitGlyph) {
+    const bu = { id: AK.uid(), kind: 'glyph', glyph: p.set.bgUnitGlyph, on: false };
+    s.units.push(bu);
+    s.bgUnit = bu.id;
+  }
+  state = s;
+  densityCache.clear();
+  afterStructuralChange();
+  toast(`프리셋 ${p.name}을 적용했습니다.`);
+}
+$('#presets').innerHTML = PRESETS.map((p, i) =>
+  `<button type="button" data-i="${i}"><span class="sw" style="background:linear-gradient(135deg, ${p.sw[0]} 50%, ${p.sw[1]} 50%)"></span>${p.name}</button>`).join('');
+$('#presets').onclick = (e) => { const b = e.target.closest('button'); if (b) applyPreset(PRESETS[+b.dataset.i]); };
+
+/* ---------- export */
+function download(name, blob) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+const baseName = () => 'askiical-' + (state.char || 'glyph').replace(/[^\p{L}\p{N}]/gu, '') + '-' + state.cols;
+
+$('#ex-png').onclick = () => {
+  const { aw, ah } = artSize();
+  const W = 2400, H = Math.round((W * ah) / aw);
+  const cv = document.createElement('canvas');
+  cv.width = W; cv.height = H;
+  paint(cv.getContext('2d'), W, H, buildOps(frame), 1);
+  cv.toBlob((b) => { download(baseName() + '.png', b); toast('PNG 2400px로 내보냈습니다.'); }, 'image/png');
+};
+
+$('#ex-svg').onclick = () => {
+  const { cols, rows } = dims();
+  const { aw, ah } = artSize();
+  const W = cols * 12, H = AK.round((W * ah) / aw);
+  const cw = W / cols, ch = H / rows;
+  const fpx = charPx(cw, ch) * state.unitScale;
+  const ops = buildOps(frame);
+  const used = new Set();
+  const body = [];
+  if (state.grid) {
+    let d = '';
+    for (let c = 0; c <= cols; c++) d += `M${AK.round(c * cw)} 0V${H}`;
+    for (let r = 0; r <= rows; r++) d += `M0 ${AK.round(r * ch)}H${W}`;
+    body.push(`<path d="${d}" stroke="${state.gridColor}" stroke-opacity="${state.gridAlpha}" stroke-width="${AK.round(Math.min(cw, ch) * 0.04)}" fill="none"/>`);
+  }
+  const inset = state.grid ? Math.min(cw, ch) * 0.06 : 0;
+  for (const op of ops) {
+    const x = (op.c + 0.5) * cw, y = (op.r + 0.5) * ch;
+    const a = op.a < 1 ? ` opacity="${op.a}"` : '';
+    if (op.box) body.push(`<rect x="${AK.round(op.c * cw + inset)}" y="${AK.round(op.r * ch + inset)}" width="${AK.round(cw - 2 * inset)}" height="${AK.round(ch - 2 * inset)}" fill="${state.fg}"/>`);
+    if (op.u.kind === 'char') {
+      if (op.u.value === ' ') continue;
+      body.push(`<text x="${AK.round(x)}" y="${AK.round(y)}" font-size="${AK.round(fpx * op.k)}" fill="${op.col}"${a}>${AK.esc(op.u.value)}</text>`);
+    } else {
+      used.add(op.u.glyph);
+      const s = (Math.min(cw, ch) * state.unitScale * op.k) / 100;
+      body.push(`<use href="#g-${op.u.glyph}" transform="matrix(${AK.round(s * 1000) / 1000} 0 0 ${AK.round(s * 1000) / 1000} ${AK.round(x - 50 * s)} ${AK.round(y - 50 * s)})" fill="${op.col}" color="${op.col}"${a}/>`);
+    }
+  }
+  const defs = [...used].map((id) => { const g = glyphById(id); return g ? `<g id="g-${id}">${AK.glyphSVG(g)}</g>` : ''; }).join('');
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">` +
+    `<defs>${defs}</defs><rect width="100%" height="100%" fill="${state.bg}"/>` +
+    `<g font-family="'${state.unitFont}', monospace" text-anchor="middle" dominant-baseline="central">${body.join('')}</g></svg>`;
+  download(baseName() + '.svg', new Blob([svg], { type: 'image/svg+xml' }));
+  toast(`SVG로 내보냈습니다. 커스텀 글리프 ${used.size}종은 벡터로 들어갑니다.`);
+};
+
+function asciiText() {
+  const { cols, rows } = dims();
+  const grid = Array.from({ length: rows }, () => Array(cols).fill(' '));
+  for (const op of buildOps(frame)) {
+    const ch = op.u.kind === 'char' ? op.u.value : (glyphById(op.u.glyph) || {}).fallback || '#';
+    grid[op.r][op.c] = ch;
+  }
+  return grid.map((r) => r.join('').replace(/\s+$/, '')).join('\n');
+}
+$('#ex-txt').onclick = () => { download(baseName() + '.txt', new Blob([asciiText()], { type: 'text/plain;charset=utf-8' })); toast('TXT로 내보냈습니다. 커스텀 글리프는 대체 문자로 바뀝니다.'); };
+$('#ex-copy').onclick = () => {
+  const t = asciiText();
+  navigator.clipboard.writeText(t).then(() => toast('텍스트 아트를 복사했습니다.'), () => toast('클립보드에 접근할 수 없습니다. TXT 내보내기를 쓰세요.'));
+};
+$('#ex-json').onclick = () => {
+  download(baseName() + '.json', new Blob([JSON.stringify(projectJSON(), null, 1)], { type: 'application/json' }));
+  toast('프로젝트를 JSON으로 저장했습니다.');
+};
+$('#im-json').onchange = async (e) => {
+  const f = e.target.files[0];
+  e.target.value = '';
+  if (!f) return;
+  try {
+    applyProject(JSON.parse(await f.text()));
+    densityCache.clear(); rasterKey = '';
+    persist();
+    toast(`${f.name}을 불러왔습니다.`);
+  } catch (err) { toast(err.message || 'JSON을 읽지 못했습니다.'); }
+};
+
+let toastTimer = 0;
+function toast(msg) {
+  const t = $('#toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 2600);
+}
+
+/* ---------- boot */
+window.addEventListener('resize', () => renderRamp());
+buildControls();
+loadStored();
+afterStructuralChange();
+document.fonts.ready.then(() => { densityCache.clear(); rasterKey = ''; afterUnitsChange(); });
