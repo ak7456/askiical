@@ -346,6 +346,7 @@ const GlyphEditor = (() => {
     g.fallback = [...$('#ed-fallback').value.trim()][0] || '#';
     if (!g.pixels.length && !g.shapes.length) { $('#ed-hint').textContent = '빈 글리프는 저장할 수 없습니다. 도형을 하나 이상 그리세요.'; return; }
     g.v = (g.v || 1) + 1;
+    if (hist.length) delete g.gen; // hand edits no longer match the generator recipe
     opts.onSave(g);
     dlg.close();
   };

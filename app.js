@@ -696,7 +696,8 @@ function renderGlyphLib() {
     card.className = 'gcard' + (used ? ' used' : '');
     card.innerHTML = `<canvas width="80" height="80"></canvas><span class="gname">${AK.esc(g.name)}</span>` +
       `<span class="gd">잉크 ${Math.round(measureGlyph(g) * 100)}%</span>` +
-      `<div class="row-btns"><button type="button" data-a="use">${used ? '빼기' : '유닛 +'}</button><button type="button" data-a="edit">편집</button></div>`;
+      `<div class="row-btns"><button type="button" data-a="use">${used ? '빼기' : '유닛 +'}</button><button type="button" data-a="edit">편집</button>` +
+      (g.gen ? '<button type="button" data-a="tune" title="생성기에서 두께, 밀도, 스타일 다시 조절">조절</button>' : '') + '</div>';
     drawGlyphThumb(card.querySelector('canvas'), g, text);
     card.querySelector('[data-a="use"]').onclick = () => {
       if (used) {
@@ -706,6 +707,7 @@ function renderGlyphLib() {
       afterUnitsChange();
     };
     card.querySelector('[data-a="edit"]').onclick = () => openEditor(g, false);
+    if (g.gen) card.querySelector('[data-a="tune"]').onclick = () => openGenerator(g);
     host.appendChild(card);
   }
 }
@@ -775,6 +777,42 @@ function openEditor(g, isNew) {
     },
   });
 }
+/* ---------- keyword generator bridge */
+const unitLabel = (u) => (u.kind === 'char' ? `‘${u.value === ' ' ? '공백' : u.value}’` : (glyphById(u.glyph) || {}).name || '글리프');
+function describeDensity(g) {
+  const v = measure({ kind: 'glyph', glyph: g.id, _g: g });
+  const others = state.units
+    .filter((u) => u.on && !(u.kind === 'glyph' && u.glyph === g.id) && (u.kind === 'char' || glyphById(u.glyph)))
+    .map((u) => ({ u, d: measure(u) }))
+    .sort((a, b) => a.d - b.d);
+  const pct = (d) => `${Math.round(d * 100)}%`;
+  let where = '';
+  if (others.length) {
+    const lo = others.filter((x) => x.d <= v).pop();
+    const hi = others.find((x) => x.d > v);
+    if (lo && hi) where = ` · 지금 램프에서 ${unitLabel(lo.u)} ${pct(lo.d)}와 ${unitLabel(hi.u)} ${pct(hi.d)} 사이에 들어갑니다.`;
+    else if (lo) where = ` · 지금 램프에서 가장 짙은 유닛이 됩니다 (다음은 ${unitLabel(lo.u)} ${pct(lo.d)}).`;
+    else if (hi) where = ` · 지금 램프에서 가장 밝은 유닛이 됩니다 (다음은 ${unitLabel(hi.u)} ${pct(hi.d)}).`;
+  }
+  return `잉크 ${pct(v)}${where}`;
+}
+function openGenerator(g) {
+  GlyphGen.open({
+    fg: state.fg === state.bg ? '#ffffff' : state.fg,
+    bg: state.bg,
+    describe: describeDensity,
+    onSave: (ng, isNew) => {
+      const i = state.glyphs.findIndex((x) => x.id === ng.id);
+      if (i >= 0) state.glyphs[i] = ng; else state.glyphs.push(ng);
+      if (isNew) state.units.push({ id: AK.uid(), kind: 'glyph', glyph: ng.id, on: true });
+      afterUnitsChange();
+      toast(isNew ? `글리프 “${ng.name}”를 만들고 유닛에 넣었습니다.` : `글리프 “${ng.name}”를 다시 조절했습니다.`);
+    },
+    onEdit: (ng, editing) => openEditor(ng, !editing),
+  }, g);
+}
+$('#gen-glyph').onclick = () => openGenerator();
+
 $('#new-glyph').onclick = () => openEditor({ name: '새 글리프 ' + (state.glyphs.length + 1), grid: 16 }, true);
 $('#svg-import').onchange = async (e) => {
   const f = e.target.files[0];

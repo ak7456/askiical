@@ -61,10 +61,11 @@
 
     <section class="ctl-sec">
       <h3><span>커스텀 글리프</span><em>VECTOR</em></h3>
-      <p class="note">직접 그리거나 SVG를 가져온 벡터 글리프를 유닛으로 섞을 수 있습니다. 밀도가 비슷한 문자와 자동으로 섞입니다.</p>
+      <p class="note">키워드로 생성하거나, 직접 그리거나, SVG에서 가져온 벡터 글리프를 유닛으로 섞을 수 있습니다. 밀도가 비슷한 문자와 자동으로 섞입니다.</p>
       <div class="glyph-lib" id="glyph-lib"></div>
       <div class="row-btns">
-        <button type="button" id="new-glyph" class="primary">새 글리프 그리기</button>
+        <button type="button" id="gen-glyph" class="primary">키워드로 생성</button>
+        <button type="button" id="new-glyph">직접 그리기</button>
         <label class="btn" for="svg-import">SVG 가져오기</label>
         <input type="file" id="svg-import" accept=".svg,image/svg+xml" hidden>
       </div>
@@ -143,8 +144,59 @@
   </div>
 </dialog>
 
+<dialog id="gen" aria-labelledby="gen-title">
+  <div class="ed">
+    <header class="ed-head">
+      <h2 id="gen-title">키워드로 글리프 생성</h2>
+      <form class="gen-form" id="gen-form" role="search">
+        <input type="search" id="gen-q" placeholder="키워드 (예: 원두, 고양이, bicycle)" aria-label="키워드" autocomplete="off">
+        <button type="submit" class="primary">찾기</button>
+      </form>
+      <p class="note" id="gen-status" role="status"></p>
+    </header>
+
+    <div class="gen-body">
+      <div class="gen-results">
+        <div class="gen-sugg" id="gen-sugg" aria-label="예시 키워드"></div>
+        <div class="gen-grid" id="gen-grid" aria-label="검색 결과"></div>
+      </div>
+
+      <div class="gen-stage">
+        <canvas id="gen-canvas" aria-label="생성된 글리프 미리보기"></canvas>
+        <canvas id="gen-field" aria-label="셀 크기 미리보기"></canvas>
+        <p class="note" id="gen-dens"></p>
+      </div>
+
+      <div class="gen-ctl">
+        <div class="seg seg-3" id="gen-styles" role="group" aria-label="스타일">
+          <button type="button" data-style="solid">면</button>
+          <button type="button" data-style="line">선</button>
+          <button type="button" data-style="hatch">해칭</button>
+          <button type="button" data-style="dots">점묘</button>
+          <button type="button" data-style="pixel">픽셀</button>
+        </div>
+        <div id="gen-ranges" class="gen-ranges"></div>
+        <label class="mini chk" id="gen-outline-row"><input type="checkbox" id="gen-outline"> <span>외곽선 함께 그리기</span></label>
+        <label class="mini chk"><input type="checkbox" id="gen-flip"> <span>좌우 반전</span></label>
+        <button type="button" id="gen-reset">설정 초기화</button>
+        <label class="mini">이름 <input type="text" id="gen-name" maxlength="24"></label>
+        <label class="mini">TXT 대체 문자 <input type="text" id="gen-fallback" maxlength="2" size="2"></label>
+      </div>
+    </div>
+
+    <footer class="ed-foot">
+      <button type="button" id="gen-edit" title="생성한 모양을 편집기로 옮겨 직접 고칩니다">편집기에서 다듬기</button>
+      <span class="grow"></span>
+      <button type="button" id="gen-cancel">닫기</button>
+      <button type="button" id="gen-add" class="primary">유닛에 추가</button>
+    </footer>
+  </div>
+</dialog>
+
 <script src="core.js"></script>
+<script src="motifs.js"></script>
 <script src="editor.js"></script>
+<script src="generator.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
