@@ -14,17 +14,23 @@
   <header class="top">
     <div class="brand">
       <h1>askiical</h1>
-      <p>ASCII 유닛으로 한 글자를 짓는 타이포그래피 시뮬레이터</p>
+      <p class="sub">ASCII 유닛으로 한 글자를 짓는 타이포그래피 시뮬레이터</p>
     </div>
-    <nav class="presets" id="presets" aria-label="프리셋"></nav>
+    <nav class="presets" aria-label="프리셋">
+      <span class="eyebrow">프리셋</span>
+      <div class="preset-row" id="presets"></div>
+    </nav>
     <div class="exports">
-      <button type="button" id="ex-png">PNG</button>
-      <button type="button" id="ex-svg">SVG</button>
-      <button type="button" id="ex-txt">TXT</button>
-      <button type="button" id="ex-copy" title="텍스트 아트를 클립보드로 복사">복사</button>
-      <span class="sep" aria-hidden="true"></span>
-      <button type="button" id="ex-json" title="설정과 커스텀 글리프를 JSON으로 저장">저장</button>
-      <label class="btn" for="im-json" title="저장한 JSON 프로젝트 불러오기">불러오기</label>
+      <div class="btn-group" role="group" aria-label="내보내기">
+        <button type="button" id="ex-png" title="2400px PNG로 저장">PNG</button>
+        <button type="button" id="ex-svg" title="벡터 SVG로 저장">SVG</button>
+        <button type="button" id="ex-txt" title="텍스트 아트로 저장">TXT</button>
+        <button type="button" id="ex-copy" title="텍스트 아트를 클립보드로 복사">복사</button>
+      </div>
+      <div class="btn-group" role="group" aria-label="프로젝트">
+        <button type="button" id="ex-json" title="설정과 커스텀 글리프를 JSON으로 저장">저장</button>
+        <label class="btn" for="im-json" title="저장한 JSON 프로젝트 불러오기">불러오기</label>
+      </div>
       <input type="file" id="im-json" accept=".json,application/json" hidden>
     </div>
   </header>
@@ -39,36 +45,36 @@
 
   <aside class="panel panel-right" aria-label="유닛">
     <section class="ctl-sec">
-      <h3><span>유닛</span><em>UNITS</em></h3>
+      <h3><span>톤 램프</span><em>RAMP</em></h3>
+      <canvas id="ramp" class="ramp" aria-label="밝은 톤에서 짙은 톤까지 유닛 순서"></canvas>
+      <p class="note" id="ramp-note"></p>
+    </section>
+
+    <section class="ctl-sec">
+      <h3><span>유닛 <b class="count" id="unit-count"></b></span><em>UNITS</em></h3>
       <div class="ctl ctl-select">
         <label for="unit-font">유닛 서체</label>
         <select id="unit-font"></select>
       </div>
-      <p class="note">칩을 누르면 켜고 끕니다. 끌어서 순서를 바꿀 수 있고, 순서는 <b>수동 램프</b>일 때 쓰입니다. 숫자는 셀 안에서 잉크가 차지하는 비율입니다.</p>
       <div class="unit-list" id="unit-list"></div>
+      <p class="note">눌러서 켜고 끄고, 끌어서 순서를 바꿉니다. 숫자는 셀 안 잉크 비율입니다.</p>
       <form class="add-chars" id="add-chars">
-        <input type="text" id="add-chars-input" placeholder="문자 입력 (예: .:-=+*#%@)" aria-label="추가할 문자">
+        <input type="text" id="add-chars-input" placeholder="문자 추가 (예: .:-=+*#%@)" aria-label="추가할 문자">
         <button type="submit">추가</button>
       </form>
       <div class="charsets" id="charsets" aria-label="문자 세트로 교체"></div>
     </section>
 
     <section class="ctl-sec">
-      <h3><span>톤 램프</span><em>RAMP</em></h3>
-      <canvas id="ramp" class="ramp" aria-label="밝은 톤에서 어두운 톤까지 유닛 순서"></canvas>
-      <p class="note" id="ramp-note"></p>
-    </section>
-
-    <section class="ctl-sec">
-      <h3><span>커스텀 글리프</span><em>VECTOR</em></h3>
-      <p class="note">키워드로 생성하거나, 직접 그리거나, SVG에서 가져온 벡터 글리프를 유닛으로 섞을 수 있습니다. 밀도가 비슷한 문자와 자동으로 섞입니다.</p>
-      <div class="glyph-lib" id="glyph-lib"></div>
-      <div class="row-btns">
-        <button type="button" id="gen-glyph" class="primary">키워드로 생성</button>
+      <h3><span>커스텀 글리프 <b class="count" id="glyph-count"></b></span><em>VECTOR</em></h3>
+      <button type="button" id="gen-glyph" class="primary wide">키워드로 글리프 생성</button>
+      <div class="row-btns split">
         <button type="button" id="new-glyph">직접 그리기</button>
         <label class="btn" for="svg-import">SVG 가져오기</label>
         <input type="file" id="svg-import" accept=".svg,image/svg+xml" hidden>
       </div>
+      <div class="glyph-lib" id="glyph-lib"></div>
+      <p class="note">카드를 누르면 유닛에 넣고 뺍니다. 넣은 글리프는 밀도가 비슷한 문자 사이에 섞입니다.</p>
     </section>
   </aside>
 </div>
@@ -194,6 +200,7 @@
 </dialog>
 
 <script src="core.js"></script>
+<script src="theme.js"></script>
 <script src="motifs.js"></script>
 <script src="editor.js"></script>
 <script src="generator.js"></script>

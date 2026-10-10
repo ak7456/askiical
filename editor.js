@@ -380,6 +380,7 @@ const GlyphEditor = (() => {
     setTool(g.pixels.length && !g.shapes.length ? 'pixel' : tool);
     setMode(mode);
     dlg.showModal();
+    AK.paintRanges(dlg);
     requestAnimationFrame(refresh);
   }
 

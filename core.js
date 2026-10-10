@@ -9,6 +9,14 @@ AK.uid = () => Math.random().toString(36).slice(2, 9);
 AK.esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 AK.round = (n) => Math.round(n * 100) / 100;
 
+// range inputs show their filled portion through a CSS variable
+AK.paintRange = (el) => {
+  const min = +el.min || 0, max = +el.max || 100;
+  el.style.setProperty('--fill', (((+el.value - min) / (max - min || 1)) * 100).toFixed(2) + '%');
+};
+AK.paintRanges = (root = document) => root.querySelectorAll('input[type="range"]').forEach(AK.paintRange);
+document.addEventListener('input', (e) => { if (e.target.type === 'range') AK.paintRange(e.target); });
+
 // Integer hash → [0,1). Deterministic per (x, y, seed).
 AK.hash = (x, y, s) => {
   let h = Math.imul(x | 0, 374761393) ^ Math.imul(y | 0, 668265263) ^ Math.imul(s | 0, 2246822519);

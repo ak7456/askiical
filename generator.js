@@ -270,6 +270,7 @@ const GlyphGen = (() => {
     $('#gen-outline').checked = o.outline;
     $('#gen-outline-row').hidden = !(o.style === 'hatch' || o.style === 'dots');
     $('#gen-flip').checked = o.flip;
+    AK.paintRanges($('#gen'));
   }
 
   function currentGlyph() {
