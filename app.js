@@ -169,13 +169,18 @@ function letterLayout() {
     const left = Math.min(0, -m.actualBoundingBoxLeft / 1000), right = Math.max(m.width / 1000, m.actualBoundingBoxRight / 1000);
     const span = (right - left) * f;
     const cols = Math.max(4, Math.ceil(span - 1e-6) + 2 * state.padCells);
-    const baseline = pad + (Hbox - (A + D) * f) / 2 + A * f;
+    // above size 1 the font box outgrows the base height: add rows so it fits with its margins.
+    // This depends only on the font and settings, so all letters made with them still share height and baseline.
+    const rowsFit = Math.max(rows, Math.ceil((Hbox * state.letterScale + 2 * pad) / state.cellAspect - 1e-6));
+    const H2 = rowsFit * state.cellAspect;
+    const baseline = pad + (H2 - 2 * pad - (A + D) * f) / 2 + A * f;
     const offY = state.offsetY * H; // vertical offset is measured against the base height, so extra rows don't move it
     // a letter whose ink would pass the bottom margin gets extra rows below; the top edge and baseline row stay put
     const inkBottom = baseline + offY + (m.actualBoundingBoxDescent / 1000) * f;
     const below = Math.max(pad, state.cellAspect); // keep at least one empty row under the descender
-    const extraRows = Math.max(0, Math.ceil((inkBottom + below - H) / state.cellAspect - 1e-6));
-    v = { mode: 'font', cols, rows: rows + extraRows, extraRows, f, originX: (cols - span) / 2 - left * f, baseline, offY };
+    const extraRows = Math.max(0, Math.ceil((inkBottom + below - H2) / state.cellAspect - 1e-6));
+    v = { mode: 'font', cols, rows: rowsFit + extraRows, sizeRows: rowsFit - rows, extraRows, f,
+      originX: (cols - span) / 2 - left * f, baseline, offY };
   }
   layoutCache = { key, v };
   return v;
@@ -519,6 +524,7 @@ function renderOutputInfo() {
   el.innerHTML = `${o.cols} × ${o.rows} 셀 · <b>${fmtNum(o.Wpt, 2)} × ${fmtNum(o.Hpt, 2)} pt</b><br>` +
     `${fmtNum(o.Wpt * PT_MM)} × ${fmtNum(o.Hpt * PT_MM)} mm · PNG ${o.pxW.toLocaleString()} × ${o.pxH.toLocaleString()} px @ ${o.dpi} dpi` +
     (o.clamped ? `<br>PNG가 너무 커서 ${o.dpi} dpi로 낮춰 저장합니다.` : '') +
+    (letterLayout().sizeRows ? `<br>글자 크기 ${state.letterScale}에 맞춰 세로 셀을 ${state.rowsFont}행에서 ${state.rowsFont + letterLayout().sizeRows}행으로 늘렸습니다.` : '') +
     (letterLayout().extraRows ? `<br>디센더가 아래 여백을 넘어서 아래로 ${letterLayout().extraRows}행을 늘렸습니다. 위쪽 가장자리와 기준선 위치는 다른 글자와 같습니다.` : '') +
     (rasterClip.length ? `<br><span class="warn">글자가 ${rasterClip.join('·')}에서 잘립니다. 글자 크기를 줄이거나 여백을 늘리세요.</span>` : '');
 }
@@ -548,7 +554,7 @@ function renderNow() {
   const bgCount = lastOps.filter((o) => o.a < 1).length;
   renderOutputInfo();
   const L = letterLayout();
-  const clip = (L.extraRows ? ` · 디센더 때문에 아래로 ${L.extraRows}행 늘림` : '') + (rasterClip.length ? ` · ${rasterClip.join('·')} 잘림` : '');
+  const clip = (L.sizeRows ? ` · 글자 크기에 맞춰 ${L.sizeRows}행 늘림` : '') + (L.extraRows ? ` · 디센더 때문에 아래로 ${L.extraRows}행 늘림` : '') + (rasterClip.length ? ` · ${rasterClip.join('·')} 잘림` : '');
   $('#info').classList.toggle('warn', rasterClip.length > 0);
   $('#info').title = rasterClip.length ? '글자가 아트보드 가장자리에 닿아 잘립니다. 글자 크기를 줄이거나 여백을 늘리세요.' : '';
   $('#info').textContent = `${cols} × ${rows} 셀${clip} · ${fmtNum(cols * state.cellPt, 2)} pt · 유닛 ${(lastOps.length - bgCount).toLocaleString()} · 커스텀 글리프 ${lastOps.custom.toLocaleString()}`;
