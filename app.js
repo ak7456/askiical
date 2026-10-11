@@ -30,7 +30,7 @@ const CHARSETS = [
 
 const SHAPE_DEFAULTS = {
   char: 'A', font: 'Bodoni Moda', weight: 700, italic: false, letterScale: 1, offsetX: 0, offsetY: 0,
-  fitMode: 'font', rowsFont: 60, padCells: 1,
+  fitMode: 'font', rowsFont: 60, padCells: 1, padRows: 2,
   cols: 72, ratio: '4:5', cellAspect: 1.5,
   cellPt: 6, dpi: '300',
   shade: 'distance', shadeDepth: 0.6, angle: 90, noiseScale: 7, blur: 3, halo: 0.15, edge: 0,
@@ -143,11 +143,12 @@ function compiled(g) {
           Letters made with the same font and settings therefore line up when placed side by side.
    Lengths below are in cell widths (a cell is 1 wide and cellAspect tall). */
 const lctx = document.createElement('canvas').getContext('2d');
+const VREF = 'HÅÉbdfhklgjpqyÿ()[]{}|';
 let layoutCache = { key: '', v: null };
 let fontEpoch = 0; // bumps when a web font finishes loading, so metrics are re-measured
 function letterLayout() {
   const key = [state.fitMode, state.char, state.font, state.weight, state.italic, state.letterScale, state.rowsFont,
-    state.padCells, state.cellAspect, state.cols, state.ratio, fontEpoch].join('|');
+    state.padCells, state.padRows, state.cellAspect, state.cols, state.ratio, fontEpoch].join('|');
   if (layoutCache.key === key) return layoutCache.v;
   let v;
   if (state.fitMode !== 'font') {
@@ -155,14 +156,20 @@ function letterLayout() {
     v = { mode: 'box', cols: state.cols, rows: Math.max(4, Math.round((state.cols * rh) / rw / state.cellAspect)) };
   } else {
     const rows = state.rowsFont, H = rows * state.cellAspect;
+    const pad = Math.min(state.padRows, Math.floor((rows - 4) / 2)) * state.cellAspect;
     lctx.font = letterFontSpec(100);
     const m = lctx.measureText(state.char || ' ');
-    const A = (m.fontBoundingBoxAscent ?? 80) / 100, D = (m.fontBoundingBoxDescent ?? 20) / 100;
-    const f = (H * state.letterScale) / (A + D); // type size in cell widths
+    // vertical box: the larger of the font's declared ascent/descent and the ink of tall/deep reference glyphs.
+    // It never depends on the current letter, so every letter of the font gets the same size and baseline.
+    const ref = lctx.measureText(VREF);
+    const A = Math.max(m.fontBoundingBoxAscent ?? 80, ref.actualBoundingBoxAscent) / 100;
+    const D = Math.max(m.fontBoundingBoxDescent ?? 20, ref.actualBoundingBoxDescent) / 100;
+    const Hbox = H - 2 * pad;
+    const f = (Hbox * state.letterScale) / (A + D); // type size in cell widths
     const left = Math.min(0, -m.actualBoundingBoxLeft / 100), right = Math.max(m.width / 100, m.actualBoundingBoxRight / 100);
     const span = (right - left) * f;
     const cols = Math.max(4, Math.ceil(span - 1e-6) + 2 * state.padCells);
-    v = { mode: 'font', cols, rows, f, originX: (cols - span) / 2 - left * f, baseline: (H - (A + D) * f) / 2 + A * f };
+    v = { mode: 'font', cols, rows, f, originX: (cols - span) / 2 - left * f, baseline: pad + (Hbox - (A + D) * f) / 2 + A * f };
   }
   layoutCache = { key, v };
   return v;
@@ -197,7 +204,7 @@ function ensureFont(spec, text) {
 /* ---------- 1. raster */
 const rc = document.createElement('canvas');
 const rctx = rc.getContext('2d', { willReadFrequently: true });
-let rasterKey = '', coverage = null;
+let rasterKey = '', coverage = null, rasterClip = [];
 const SS = 6;
 
 function raster() {
@@ -249,6 +256,13 @@ function raster() {
       }
     }
   }
+  // which artboard edges the letter's ink reaches (a sign it is being cut off)
+  rasterClip = [];
+  const edge = (i) => cov[i] > 0.04;
+  for (let c = 0; c < cols; c++) { if (edge(c)) { rasterClip.push('위'); break; } }
+  for (let c = 0; c < cols; c++) { if (edge((rows - 1) * cols + c)) { rasterClip.push('아래'); break; } }
+  for (let r = 0; r < rows; r++) { if (edge(r * cols)) { rasterClip.push('왼쪽'); break; } }
+  for (let r = 0; r < rows; r++) { if (edge(r * cols + cols - 1)) { rasterClip.push('오른쪽'); break; } }
   rasterKey = key;
   coverage = cov;
   toneKey = '';
@@ -498,7 +512,8 @@ function renderOutputInfo() {
   const o = outputSize();
   el.innerHTML = `${o.cols} × ${o.rows} 셀 · <b>${fmtNum(o.Wpt, 2)} × ${fmtNum(o.Hpt, 2)} pt</b><br>` +
     `${fmtNum(o.Wpt * PT_MM)} × ${fmtNum(o.Hpt * PT_MM)} mm · PNG ${o.pxW.toLocaleString()} × ${o.pxH.toLocaleString()} px @ ${o.dpi} dpi` +
-    (o.clamped ? `<br>PNG가 너무 커서 ${o.dpi} dpi로 낮춰 저장합니다.` : '');
+    (o.clamped ? `<br>PNG가 너무 커서 ${o.dpi} dpi로 낮춰 저장합니다.` : '') +
+    (rasterClip.length ? `<br><span class="warn">글자가 ${rasterClip.join('·')}에서 잘립니다. 글자 크기를 줄이거나 여백을 늘리세요.</span>` : '');
 }
 
 function artSize() {
@@ -525,7 +540,10 @@ function renderNow() {
   const { cols, rows } = dims();
   const bgCount = lastOps.filter((o) => o.a < 1).length;
   renderOutputInfo();
-  $('#info').textContent = `${cols} × ${rows} 셀 · ${fmtNum(cols * state.cellPt, 2)} pt · 유닛 ${(lastOps.length - bgCount).toLocaleString()} · 커스텀 글리프 ${lastOps.custom.toLocaleString()}`;
+  const clip = rasterClip.length ? ` · ${rasterClip.join('·')} 잘림` : '';
+  $('#info').classList.toggle('warn', !!clip);
+  $('#info').title = clip ? '글자가 아트보드 가장자리에 닿아 잘립니다. 글자 크기를 줄이거나 여백을 늘리세요.' : '';
+  $('#info').textContent = `${cols} × ${rows} 셀${clip} · ${fmtNum(cols * state.cellPt, 2)} pt · 유닛 ${(lastOps.length - bgCount).toLocaleString()} · 커스텀 글리프 ${lastOps.custom.toLocaleString()}`;
 }
 function requestRender() { if (!rafId) rafId = requestAnimationFrame(renderNow); }
 new ResizeObserver(requestRender).observe(stage);
@@ -569,6 +587,7 @@ const SECTIONS = [
   ] },
   { id: 'grid', title: '그리드', en: 'GRID', items: [
     { k: 'rowsFont', t: 'range', label: '세로 셀 수', min: 12, max: 200, step: 1, when: (s) => s.fitMode === 'font' },
+    { k: 'padRows', t: 'range', label: '위아래 여백 (셀)', min: 0, max: 12, step: 1, when: (s) => s.fitMode === 'font' },
     { k: 'padCells', t: 'range', label: '좌우 여백 (셀)', min: 0, max: 12, step: 1, when: (s) => s.fitMode === 'font' },
     { k: 'cols', t: 'range', label: '가로 셀 수', min: 12, max: 200, step: 1, when: (s) => s.fitMode !== 'font' },
     { k: 'ratio', t: 'select', label: '아트보드 비율', when: (s) => s.fitMode !== 'font', options: () => opt([['1:1', '1:1 정사각'], ['4:5', '4:5'], ['3:4', '3:4'], ['2:3', '2:3 포스터'], ['1:1.414', 'A 판형'], ['16:9', '16:9']]) },

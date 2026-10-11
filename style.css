@@ -196,6 +196,8 @@ details[open].ctl-sec > summary h3 span::before { transform: rotate(45deg); marg
 .color-pick code { font: 11px var(--f-mono); color: var(--mute); text-transform: uppercase; }
 .ctl-number input { width: 96px; text-align: right; font: 12px var(--f-mono); font-variant-numeric: tabular-nums; }
 .ctl-number input[aria-invalid="true"] { border-color: var(--danger); }
+.stage-info.warn, .out-info .warn { color: var(--danger); }
+.stage-info.warn { border-color: var(--danger); }
 .out-info { font: 11px/1.6 var(--f-mono); font-variant-numeric: tabular-nums; }
 .ctl-text input { font-size: 26px; line-height: 1; text-align: center; padding: 8px; font-family: var(--f-mono); }
 .ctl-file .btn { width: 100%; color: var(--mute); border-style: dashed; }
