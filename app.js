@@ -756,7 +756,9 @@ async function onFontFile(e) {
   if (!f) return;
   try {
     const name = 'User ' + f.name.replace(/\.[^.]+$/, '').slice(0, 24);
-    const face = new FontFace(name, await f.arrayBuffer());
+    const buf = await f.arrayBuffer();
+    userFonts[name] = buf.slice(0);
+    const face = new FontFace(name, buf);
     await face.load();
     document.fonts.add(face);
     if (!LETTER_FONTS.includes(name)) LETTER_FONTS.push(name);
@@ -1051,41 +1053,28 @@ $('#ex-png').onclick = () => {
   cv.toBlob((b) => { download(baseName() + '.png', b); toast('PNG 2400px로 내보냈습니다.'); }, 'image/png');
 };
 
-$('#ex-svg').onclick = () => {
-  const { cols, rows } = dims();
-  const { aw, ah } = artSize();
-  const W = cols * 12, H = AK.round((W * ah) / aw);
-  const cw = W / cols, ch = H / rows;
-  const fpx = charPx(cw, ch) * state.unitScale;
-  const ops = buildOps(frame);
-  const used = new Set();
-  const body = [];
-  if (state.grid) {
-    let d = '';
-    for (let c = 0; c <= cols; c++) d += `M${AK.round(c * cw)} 0V${H}`;
-    for (let r = 0; r <= rows; r++) d += `M0 ${AK.round(r * ch)}H${W}`;
-    body.push(`<path d="${d}" stroke="${state.gridColor}" stroke-opacity="${state.gridAlpha}" stroke-width="${AK.round(Math.min(cw, ch) * 0.04)}" fill="none"/>`);
+const userFonts = {}; // uploaded font files by family, for outline export
+
+$('#ex-svg').onclick = async () => {
+  const btn = $('#ex-svg');
+  btn.disabled = true;
+  toast('아웃라인 SVG를 만드는 중입니다…');
+  try {
+    await Outline.ensureFonts();
+    for (const [fam, buf] of Object.entries(userFonts)) Outline.addFont(fam, buf);
+    const { cols } = dims();
+    const { aw, ah } = artSize();
+    const W = cols * 12, H = (W * ah) / aw;
+    const res = Outline.build({ state, dims: dims(), ops: buildOps(frame), glyphById, charPx, W, H });
+    download(baseName() + '-outline.svg', new Blob([res.svg], { type: 'image/svg+xml' }));
+    toast(res.missing.length
+      ? `아웃라인 SVG로 저장했습니다. 서체에 없는 문자 ${res.missing.join(' ')} 는 텍스트로 남았습니다.`
+      : `아웃라인 SVG로 저장했습니다. 모든 유닛이 채움 패스입니다 (${res.count.toLocaleString()}개, ${res.colors}색).`);
+  } catch (err) {
+    toast('SVG를 만들지 못했습니다: ' + err.message);
+  } finally {
+    btn.disabled = false;
   }
-  const inset = state.grid ? Math.min(cw, ch) * 0.06 : 0;
-  for (const op of ops) {
-    const x = (op.c + 0.5) * cw, y = (op.r + 0.5) * ch;
-    const a = op.a < 1 ? ` opacity="${op.a}"` : '';
-    if (op.box) body.push(`<rect x="${AK.round(op.c * cw + inset)}" y="${AK.round(op.r * ch + inset)}" width="${AK.round(cw - 2 * inset)}" height="${AK.round(ch - 2 * inset)}" fill="${op.box}"/>`);
-    if (op.u.kind === 'char') {
-      if (op.u.value === ' ') continue;
-      body.push(`<text x="${AK.round(x)}" y="${AK.round(y)}" font-size="${AK.round(fpx * op.k)}" fill="${op.col}"${a}>${AK.esc(op.u.value)}</text>`);
-    } else {
-      used.add(op.u.glyph);
-      const s = (Math.min(cw, ch) * state.unitScale * op.k) / 100;
-      body.push(`<use href="#g-${op.u.glyph}" transform="matrix(${AK.round(s * 1000) / 1000} 0 0 ${AK.round(s * 1000) / 1000} ${AK.round(x - 50 * s)} ${AK.round(y - 50 * s)})" fill="${op.col}" color="${op.col}"${a}/>`);
-    }
-  }
-  const defs = [...used].map((id) => { const g = glyphById(id); return g ? `<g id="g-${id}">${AK.glyphSVG(g)}</g>` : ''; }).join('');
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">` +
-    `<defs>${defs}</defs><rect width="100%" height="100%" fill="${state.bg}"/>` +
-    `<g font-family="'${state.unitFont}', monospace" text-anchor="middle" dominant-baseline="central">${body.join('')}</g></svg>`;
-  download(baseName() + '.svg', new Blob([svg], { type: 'image/svg+xml' }));
-  toast(`SVG로 내보냈습니다. 커스텀 글리프 ${used.size}종은 벡터로 들어갑니다.`);
 };
 
 function asciiText() {

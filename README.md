@@ -22,6 +22,10 @@ npx http-server -p 8080 .   # 또는 python3 -m http.server
 | `generator.js` | 키워드 → 글리프 생성기 (검색, 스타일 렌더러, UI) |
 | `vendor/lucide-icons.js` | Lucide 아이콘 1,877종 (ISC). 생성기를 처음 열 때 불러옴 |
 | `tools/build-icons.mjs` | `lucide-static` 패키지로 `vendor/lucide-icons.js`를 다시 만드는 스크립트 |
+| `outline.js` | 인쇄용 아웃라인 SVG 내보내기 (패스 변환, 선→면, 문자→아웃라인) |
+| `vendor/opentype.min.js` | opentype.js 1.3.4 (MIT). 문자 아웃라인 추출용, SVG 내보낼 때 불러옴 |
+| `vendor/print-fonts.js` | 유닛 서체 5종 (OFL). 문자 아웃라인용, SVG 내보낼 때 불러옴 |
+| `tools/build-print-fonts.mjs` | `vendor/print-fonts.js`를 다시 만드는 스크립트 |
 | `app.js` | 렌더링 파이프라인, 컨트롤, 유닛 패널, 프리셋, 내보내기 |
 
 ## 렌더링 파이프라인
@@ -119,8 +123,17 @@ node tools/build-icons.mjs ./package
 
 ## 내보내기
 
+아티팩트 미리보기에서는 다운로드가 막혀 있습니다. 내보내기는 `index.html`을 직접 열거나 웹 서버로 띄워서 쓰세요.
+
+
 - **PNG**: 2400px로 저장합니다.
-- **SVG**: 문자는 `<text>`로, 커스텀 글리프는 `<defs>` + `<use>` 벡터로 들어갑니다.
+- **SVG (인쇄용 아웃라인)**: 모든 유닛을 채움 패스로 바꿔 저장합니다. 일러스트레이터에 그대로 열어 인쇄 작업을 할 수 있습니다.
+  - 파일에는 `<path>`, `<rect>`, `<g>`만 들어갑니다. `<use>`, `<text>`, 선(stroke), `transform`, `currentColor`는 쓰지 않습니다.
+  - 커스텀 글리프는 도형 행렬과 셀 위치를 좌표에 반영합니다. 원호와 2차 곡선은 3차 곡선으로 바꿉니다.
+  - 선(stroke)은 둥근 끝·둥근 모서리 그대로 면으로 바꿉니다. 짧은 캡슐 여러 개를 같은 방향으로 겹친 컴파운드 패스라서, 일러스트레이터에서 깔끔한 한 덩어리로 만들려면 패스파인더 → 합치기를 쓰세요.
+  - 문자는 내장 서체(JetBrains Mono, IBM Plex Mono, Space Mono, VT323, Major Mono Display)나 직접 올린 TTF/OTF/WOFF 서체에서 글리프 윤곽을 가져옵니다. 유닛 서체에 없는 문자는 JetBrains Mono → IBM Plex Mono 순서로 찾고, 그래도 없으면(예: 한글 자모) 텍스트로 남기고 알려 줍니다.
+  - 레이어는 `background`, `grid`, `cells`(녹아웃 칸), `background-units`, `units-N`(색마다 한 그룹)로 나뉩니다. 별색이나 색 교체 작업을 그룹 단위로 할 수 있습니다.
+  - 크기는 가로 셀 수 × 12px입니다. 벡터라서 인쇄 크기에 맞춰 자유롭게 키우면 됩니다.
 - **TXT / 복사**: 텍스트 아트로 내보냅니다.
 - **JSON**: 설정과 글리프 라이브러리를 저장합니다. 불러오기로 다시 열 수 있습니다.
 
