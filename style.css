@@ -97,7 +97,7 @@ button.danger { color: var(--danger); }
 button.wide { width: 100%; min-height: 34px; }
 button[aria-pressed="true"], .seg button.on { background: var(--accent-soft); color: var(--text); border-color: var(--accent); }
 
-input[type="text"], input[type="search"], select, textarea {
+input[type="text"], input[type="search"], input[type="number"], select, textarea {
   width: 100%;
   min-width: 0;
   min-height: 30px;
@@ -194,6 +194,9 @@ details[open].ctl-sec > summary h3 span::before { transform: rotate(45deg); marg
 .chk { display: inline-flex; align-items: center; gap: 9px; cursor: pointer; color: var(--text); font-size: 12px; }
 .color-pick { display: inline-flex; align-items: center; gap: 8px; }
 .color-pick code { font: 11px var(--f-mono); color: var(--mute); text-transform: uppercase; }
+.ctl-number input { width: 96px; text-align: right; font: 12px var(--f-mono); font-variant-numeric: tabular-nums; }
+.ctl-number input[aria-invalid="true"] { border-color: var(--danger); }
+.out-info { font: 11px/1.6 var(--f-mono); font-variant-numeric: tabular-nums; }
 .ctl-text input { font-size: 26px; line-height: 1; text-align: center; padding: 8px; font-family: var(--f-mono); }
 .ctl-file .btn { width: 100%; color: var(--mute); border-style: dashed; }
 .seg-inline { display: flex; gap: 0; }

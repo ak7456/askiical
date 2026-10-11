@@ -312,7 +312,7 @@ const Outline = (() => {
       grid = `<g id="grid" fill="${state.gridColor}" opacity="${state.gridAlpha}">${grid}</g>`;
     }
     const svg = `<?xml version="1.0" encoding="UTF-8"?>\n` +
-      `<svg xmlns="http://www.w3.org/2000/svg" version="1.1" viewBox="0 0 ${R(W)} ${R(H)}" width="${R(W)}px" height="${R(H)}px">` +
+      `<svg xmlns="http://www.w3.org/2000/svg" version="1.1" viewBox="0 0 ${R(W)} ${R(H)}" width="${R(W)}${ctx.unit || 'px'}" height="${R(H)}${ctx.unit || 'px'}">` +
       `<g id="background"><rect x="0" y="0" width="${R(W)}" height="${R(H)}" fill="${state.bg}"/></g>` +
       grid +
       layer('cells', boxes) +

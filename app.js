@@ -30,7 +30,9 @@ const CHARSETS = [
 
 const SHAPE_DEFAULTS = {
   char: 'A', font: 'Bodoni Moda', weight: 700, italic: false, letterScale: 1, offsetX: 0, offsetY: 0,
+  fitMode: 'font', rowsFont: 60, padCells: 1,
   cols: 72, ratio: '4:5', cellAspect: 1.5,
+  cellPt: 6, dpi: '300',
   shade: 'distance', shadeDepth: 0.6, angle: 90, noiseScale: 7, blur: 3, halo: 0.15, edge: 0,
   gamma: 1, contrast: 0, threshold: 0.08, grain: 0.08, invert: false,
   rampMode: 'auto', mixTol: 0.08, variation: 0.06, sizeMode: 'fixed', unitScale: 1, seed: 7,
@@ -134,10 +136,40 @@ function compiled(g) {
   return cg;
 }
 
+/* Grid layout.
+   box  — the letter's ink box is fitted into a fixed artboard (cols × ratio); every letter gets its own type size.
+   font — type size comes from the font's ascent + descent filling the artboard height (rows), the baseline sits
+          on the same row for every letter, and the column count follows the letter's advance width.
+          Letters made with the same font and settings therefore line up when placed side by side.
+   Lengths below are in cell widths (a cell is 1 wide and cellAspect tall). */
+const lctx = document.createElement('canvas').getContext('2d');
+let layoutCache = { key: '', v: null };
+let fontEpoch = 0; // bumps when a web font finishes loading, so metrics are re-measured
+function letterLayout() {
+  const key = [state.fitMode, state.char, state.font, state.weight, state.italic, state.letterScale, state.rowsFont,
+    state.padCells, state.cellAspect, state.cols, state.ratio, fontEpoch].join('|');
+  if (layoutCache.key === key) return layoutCache.v;
+  let v;
+  if (state.fitMode !== 'font') {
+    const [rw, rh] = state.ratio.split(':').map(Number);
+    v = { mode: 'box', cols: state.cols, rows: Math.max(4, Math.round((state.cols * rh) / rw / state.cellAspect)) };
+  } else {
+    const rows = state.rowsFont, H = rows * state.cellAspect;
+    lctx.font = letterFontSpec(100);
+    const m = lctx.measureText(state.char || ' ');
+    const A = (m.fontBoundingBoxAscent ?? 80) / 100, D = (m.fontBoundingBoxDescent ?? 20) / 100;
+    const f = (H * state.letterScale) / (A + D); // type size in cell widths
+    const left = Math.min(0, -m.actualBoundingBoxLeft / 100), right = Math.max(m.width / 100, m.actualBoundingBoxRight / 100);
+    const span = (right - left) * f;
+    const cols = Math.max(4, Math.ceil(span - 1e-6) + 2 * state.padCells);
+    v = { mode: 'font', cols, rows, f, originX: (cols - span) / 2 - left * f, baseline: (H - (A + D) * f) / 2 + A * f };
+  }
+  layoutCache = { key, v };
+  return v;
+}
 function dims() {
-  const [rw, rh] = state.ratio.split(':').map(Number);
-  const rows = Math.max(4, Math.round((state.cols * rh) / rw / state.cellAspect));
-  return { cols: state.cols, rows };
+  const l = letterLayout();
+  return { cols: l.cols, rows: l.rows };
 }
 const letterFontSpec = (px) => `${state.italic ? 'italic ' : ''}${state.weight} ${px}px "${state.font}", serif`;
 const unitFontSpec = (px) => `${px}px "${state.unitFont}", ui-monospace, monospace`;
@@ -154,6 +186,7 @@ function ensureFont(spec, text) {
     fontTried.add(key);
     document.fonts.load(spec, text).then(() => {
       rasterKey = '';
+      fontEpoch++;
       densityCache.clear();
       afterStructuralChange();
     }).catch(() => {});
@@ -169,7 +202,8 @@ const SS = 6;
 
 function raster() {
   const { cols, rows } = dims();
-  const key = [state.char, state.font, state.weight, state.italic, state.letterScale, state.offsetX, state.offsetY, cols, rows, state.cellAspect].join('|');
+  const L = letterLayout();
+  const key = [state.fitMode, state.char, state.font, state.weight, state.italic, state.letterScale, state.offsetX, state.offsetY, cols, rows, state.cellAspect, L.f, fontEpoch].join('|');
   if (key === rasterKey && coverage) return coverage;
   ensureFont(letterFontSpec(100), state.char || 'A');
   const W = cols * SS, H = Math.max(rows, Math.round(rows * state.cellAspect * SS));
@@ -185,11 +219,19 @@ function raster() {
     const bw = m.actualBoundingBoxLeft + m.actualBoundingBoxRight;
     const bh = m.actualBoundingBoxAscent + m.actualBoundingBoxDescent;
     if (bw > 0 && bh > 0) {
-      const fit = Math.min((W * 0.84) / bw, (H * 0.84) / bh) * state.letterScale;
-      rctx.font = letterFontSpec(200 * fit);
-      const m2 = rctx.measureText(text);
-      const x = W / 2 - (m2.actualBoundingBoxRight - m2.actualBoundingBoxLeft) / 2 + state.offsetX * W;
-      const y = H / 2 + (m2.actualBoundingBoxAscent - m2.actualBoundingBoxDescent) / 2 + state.offsetY * H;
+      let x, y;
+      if (L.mode === 'font') {
+        const sy = H / (rows * state.cellAspect); // raster px per cell width, vertically
+        rctx.font = letterFontSpec(L.f * SS);
+        x = (L.originX + state.offsetX * cols) * SS;
+        y = (L.baseline + state.offsetY * rows * state.cellAspect) * sy;
+      } else {
+        const fit = Math.min((W * 0.84) / bw, (H * 0.84) / bh) * state.letterScale;
+        rctx.font = letterFontSpec(200 * fit);
+        const m2 = rctx.measureText(text);
+        x = W / 2 - (m2.actualBoundingBoxRight - m2.actualBoundingBoxLeft) / 2 + state.offsetX * W;
+        y = H / 2 + (m2.actualBoundingBoxAscent - m2.actualBoundingBoxDescent) / 2 + state.offsetY * H;
+      }
       rctx.fillStyle = '#000';
       rctx.fillText(text, x, y);
       const data = rctx.getImageData(0, 0, W, H).data;
@@ -436,6 +478,29 @@ const vctx = view.getContext('2d');
 const stage = $('#stage');
 let frame = 0, lastOps = null, rafId = 0, animTimer = 0;
 
+/* physical output: one cell is cellPt wide; PNG pixels follow from dpi */
+const PT_MM = 25.4 / 72;
+const MAX_SIDE = 16000, MAX_AREA = 120e6; // stay inside browser canvas limits
+function outputSize() {
+  const { cols, rows } = dims();
+  const Wpt = cols * state.cellPt, Hpt = rows * state.cellAspect * state.cellPt;
+  let dpi = parseFloat(state.dpi) || 300;
+  let pxW = Math.round((Wpt / 72) * dpi), pxH = Math.round((Hpt / 72) * dpi);
+  let clamped = false;
+  const k = Math.min(1, MAX_SIDE / Math.max(pxW, pxH), Math.sqrt(MAX_AREA / (pxW * pxH)));
+  if (k < 1) { dpi = Math.floor(dpi * k); pxW = Math.round((Wpt / 72) * dpi); pxH = Math.round((Hpt / 72) * dpi); clamped = true; }
+  return { cols, rows, Wpt, Hpt, dpi, pxW, pxH, clamped };
+}
+const fmtNum = (n, d = 1) => Number(n.toFixed(d)).toLocaleString();
+function renderOutputInfo() {
+  const el = document.getElementById('out-info');
+  if (!el) return;
+  const o = outputSize();
+  el.innerHTML = `${o.cols} × ${o.rows} 셀 · <b>${fmtNum(o.Wpt, 2)} × ${fmtNum(o.Hpt, 2)} pt</b><br>` +
+    `${fmtNum(o.Wpt * PT_MM)} × ${fmtNum(o.Hpt * PT_MM)} mm · PNG ${o.pxW.toLocaleString()} × ${o.pxH.toLocaleString()} px @ ${o.dpi} dpi` +
+    (o.clamped ? `<br>PNG가 너무 커서 ${o.dpi} dpi로 낮춰 저장합니다.` : '');
+}
+
 function artSize() {
   const { cols, rows } = dims();
   return { aw: cols, ah: rows * state.cellAspect };
@@ -459,7 +524,8 @@ function renderNow() {
   paint(vctx, W, H, lastOps, dpr);
   const { cols, rows } = dims();
   const bgCount = lastOps.filter((o) => o.a < 1).length;
-  $('#info').textContent = `${cols} × ${rows} 셀 · 유닛 ${(lastOps.length - bgCount).toLocaleString()} · 커스텀 글리프 ${lastOps.custom.toLocaleString()}`;
+  renderOutputInfo();
+  $('#info').textContent = `${cols} × ${rows} 셀 · ${fmtNum(cols * state.cellPt, 2)} pt · 유닛 ${(lastOps.length - bgCount).toLocaleString()} · 커스텀 글리프 ${lastOps.custom.toLocaleString()}`;
 }
 function requestRender() { if (!rafId) rafId = requestAnimationFrame(renderNow); }
 new ResizeObserver(requestRender).observe(stage);
@@ -477,6 +543,7 @@ const SECTIONS = [
   { id: 'source', title: '글자', en: 'SOURCE', items: [
     { k: 'char', t: 'text', label: '글자 (한 글자, 최대 4자)' },
     { k: 'font', t: 'select', label: '서체', options: () => LETTER_FONTS.map((f) => [f, f]) },
+    { k: 'fitMode', t: 'seg', label: '글자 맞춤', options: () => opt([['font', '서체 기준'], ['box', '개별 맞춤']]) },
     { k: 'weight', t: 'range', label: '굵기', min: 100, max: 900, step: 100 },
     { k: 'italic', t: 'check', label: '이탤릭' },
     { k: 'letterScale', t: 'range', label: '글자 크기', min: 0.3, max: 1.8, step: 0.01 },
@@ -501,12 +568,19 @@ const SECTIONS = [
       when: (s) => themed(s) && (s.colorMode === 'random' || s.colorMode === 'noise' || s.colorSpread > 0) },
   ] },
   { id: 'grid', title: '그리드', en: 'GRID', items: [
-    { k: 'cols', t: 'range', label: '가로 셀 수', min: 12, max: 200, step: 1 },
-    { k: 'ratio', t: 'select', label: '아트보드 비율', options: () => opt([['1:1', '1:1 정사각'], ['4:5', '4:5'], ['3:4', '3:4'], ['2:3', '2:3 포스터'], ['1:1.414', 'A 판형'], ['16:9', '16:9']]) },
+    { k: 'rowsFont', t: 'range', label: '세로 셀 수', min: 12, max: 200, step: 1, when: (s) => s.fitMode === 'font' },
+    { k: 'padCells', t: 'range', label: '좌우 여백 (셀)', min: 0, max: 12, step: 1, when: (s) => s.fitMode === 'font' },
+    { k: 'cols', t: 'range', label: '가로 셀 수', min: 12, max: 200, step: 1, when: (s) => s.fitMode !== 'font' },
+    { k: 'ratio', t: 'select', label: '아트보드 비율', when: (s) => s.fitMode !== 'font', options: () => opt([['1:1', '1:1 정사각'], ['4:5', '4:5'], ['3:4', '3:4'], ['2:3', '2:3 포스터'], ['1:1.414', 'A 판형'], ['16:9', '16:9']]) },
     { k: 'cellAspect', t: 'range', label: '셀 세로 비 (높이 ÷ 너비)', min: 0.6, max: 2.4, step: 0.05 },
     { k: 'grid', t: 'check', label: '격자선 그리기' },
     { k: 'gridColor', t: 'color', label: '격자선 색', when: (s) => s.grid },
     { k: 'gridAlpha', t: 'range', label: '격자선 농도', min: 0.02, max: 1, step: 0.01, when: (s) => s.grid },
+  ] },
+  { id: 'output', title: '출력', en: 'OUTPUT', items: [
+    { k: 'cellPt', t: 'number', label: '셀 너비 (pt)', min: 0.25, max: 72, step: 0.01 },
+    { k: 'dpi', t: 'seg', label: 'PNG 해상도', options: () => opt([['150', '150 dpi'], ['300', '300 dpi'], ['600', '600 dpi']]) },
+    { id: 'out-info', t: 'info' },
   ] },
   { id: 'tone', title: '톤', en: 'TONE', items: [
     { k: 'shade', t: 'select', label: '안쪽 음영', options: () => opt([['solid', '단색'], ['distance', '외곽에서 안쪽으로'], ['gradient', '직선 그라디언트'], ['radial', '원형 그라디언트'], ['noise', '노이즈']]) },
@@ -549,7 +623,7 @@ const fmt = (it, v) => {
 };
 
 const SEC_KEY = 'askiical:sections';
-let secOpen = { source: true, color: true, grid: false, tone: true, map: false };
+let secOpen = { source: true, color: true, grid: false, output: true, tone: true, map: false };
 try { Object.assign(secOpen, JSON.parse(localStorage.getItem(SEC_KEY) || '{}')); } catch (e) { /* defaults */ }
 
 function buildControls() {
@@ -610,6 +684,17 @@ function buildControls() {
         row.querySelector('input').addEventListener('change', onFontFile);
       } else if (it.t === 'theme') {
         buildThemeUI(row);
+      } else if (it.t === 'number') {
+        row.innerHTML = `<label for="${id}">${it.label}</label><input type="number" id="${id}" min="${it.min}" max="${it.max}" step="${it.step}" inputmode="decimal">`;
+        it.input = row.querySelector('input');
+        it.input.addEventListener('input', () => {
+          const v = parseFloat(it.input.value);
+          if (Number.isFinite(v) && v >= it.min && v <= it.max) { it.input.removeAttribute('aria-invalid'); set(it.k, v); }
+          else it.input.setAttribute('aria-invalid', 'true');
+        });
+        it.input.addEventListener('change', () => { it.input.value = state[it.k]; it.input.removeAttribute('aria-invalid'); });
+      } else if (it.t === 'info') {
+        row.innerHTML = `<p class="note out-info" id="${it.id}" aria-live="polite"></p>`;
       }
       body.appendChild(row);
     }
@@ -1014,6 +1099,12 @@ function applyPreset(p) {
   }
   const s = { ...SHAPE_DEFAULTS, ...p.set };
   delete s.bgUnitGlyph;
+  // presets describe a look; the print setup (fit mode, cell size, dpi) stays the user's
+  s.fitMode = state.fitMode; s.cellPt = state.cellPt; s.dpi = state.dpi;
+  if (!p.set.rowsFont) {
+    const [rw, rh] = s.ratio.split(':').map(Number);
+    s.rowsFont = Math.max(12, Math.round((s.cols * rh) / rw / s.cellAspect));
+  }
   s.glyphs = keepGlyphs;
   s.units = [...new Set([...p.units])].map((c) => ({ id: AK.uid(), kind: 'char', value: c, on: true }))
     .concat(p.glyphs.map((id) => ({ id: AK.uid(), kind: 'glyph', glyph: id, on: true })));
@@ -1042,15 +1133,40 @@ function download(name, blob) {
   a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 }
-const baseName = () => 'askiical-' + (state.char || 'glyph').replace(/[^\p{L}\p{N}]/gu, '') + '-' + state.cols;
+const baseName = () => 'askiical-' + (state.char || 'glyph').replace(/[^\p{L}\p{N}]/gu, '') + '-' + dims().cols + 'x' + dims().rows;
+
+// PNG pHYs chunk so Illustrator / Photoshop place the image at its physical size
+const CRC_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; }
+  return t;
+})();
+const crc32 = (bytes) => { let c = 0xffffffff; for (const b of bytes) c = CRC_TABLE[(c ^ b) & 255] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; };
+async function withDpi(blob, dpi) {
+  const src = new Uint8Array(await blob.arrayBuffer());
+  const ppm = Math.round(dpi / 0.0254);
+  const chunk = new Uint8Array(21);
+  const dv = new DataView(chunk.buffer);
+  dv.setUint32(0, 9);
+  chunk.set([0x70, 0x48, 0x59, 0x73], 4); // "pHYs"
+  dv.setUint32(8, ppm); dv.setUint32(12, ppm); chunk[16] = 1; // unit: metre
+  dv.setUint32(17, crc32(chunk.subarray(4, 17)));
+  const at = 33; // signature (8) + IHDR chunk (25)
+  const out = new Uint8Array(src.length + chunk.length);
+  out.set(src.subarray(0, at)); out.set(chunk, at); out.set(src.subarray(at), at + chunk.length);
+  return new Blob([out], { type: 'image/png' });
+}
 
 $('#ex-png').onclick = () => {
-  const { aw, ah } = artSize();
-  const W = 2400, H = Math.round((W * ah) / aw);
+  const o = outputSize();
   const cv = document.createElement('canvas');
-  cv.width = W; cv.height = H;
-  paint(cv.getContext('2d'), W, H, buildOps(frame), 1);
-  cv.toBlob((b) => { download(baseName() + '.png', b); toast('PNG 2400px로 내보냈습니다.'); }, 'image/png');
+  cv.width = o.pxW; cv.height = o.pxH;
+  paint(cv.getContext('2d'), o.pxW, o.pxH, buildOps(frame), 1);
+  cv.toBlob(async (b) => {
+    if (!b) { toast('PNG를 만들지 못했습니다. 셀 너비나 해상도를 낮춰 보세요.'); return; }
+    download(baseName() + `-${o.dpi}dpi.png`, await withDpi(b, o.dpi));
+    toast(`PNG ${o.pxW.toLocaleString()} × ${o.pxH.toLocaleString()} px (${o.dpi} dpi, ${fmtNum(o.Wpt, 2)} × ${fmtNum(o.Hpt, 2)} pt)로 내보냈습니다.`);
+  }, 'image/png');
 };
 
 const userFonts = {}; // uploaded font files by family, for outline export
@@ -1062,10 +1178,8 @@ $('#ex-svg').onclick = async () => {
   try {
     await Outline.ensureFonts();
     for (const [fam, buf] of Object.entries(userFonts)) Outline.addFont(fam, buf);
-    const { cols } = dims();
-    const { aw, ah } = artSize();
-    const W = cols * 12, H = (W * ah) / aw;
-    const res = Outline.build({ state, dims: dims(), ops: buildOps(frame), glyphById, charPx, W, H });
+    const o = outputSize();
+    const res = Outline.build({ state, dims: dims(), ops: buildOps(frame), glyphById, charPx, W: o.Wpt, H: o.Hpt, unit: 'pt' });
     download(baseName() + '-outline.svg', new Blob([res.svg], { type: 'image/svg+xml' }));
     toast(res.missing.length
       ? `아웃라인 SVG로 저장했습니다. 서체에 없는 문자 ${res.missing.join(' ')} 는 텍스트로 남았습니다.`
