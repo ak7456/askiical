@@ -9,6 +9,14 @@ AK.uid = () => Math.random().toString(36).slice(2, 9);
 AK.esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 AK.round = (n) => Math.round(n * 100) / 100;
 
+// range inputs show their filled portion through a CSS variable
+AK.paintRange = (el) => {
+  const min = +el.min || 0, max = +el.max || 100;
+  el.style.setProperty('--fill', (((+el.value - min) / (max - min || 1)) * 100).toFixed(2) + '%');
+};
+AK.paintRanges = (root = document) => root.querySelectorAll('input[type="range"]').forEach(AK.paintRange);
+document.addEventListener('input', (e) => { if (e.target.type === 'range') AK.paintRange(e.target); });
+
 // Integer hash → [0,1). Deterministic per (x, y, seed).
 AK.hash = (x, y, s) => {
   let h = Math.imul(x | 0, 374761393) ^ Math.imul(y | 0, 668265263) ^ Math.imul(s | 0, 2246822519);
@@ -95,6 +103,7 @@ AK.matScale = (m) => (m ? Math.sqrt(Math.abs(m[0] * m[3] - m[1] * m[2])) : 1);
 /* ---------- glyph compile → Path2D */
 AK.compileGlyph = (g) => {
   const fill = new Path2D();
+  const fills = []; // shapes with their own fill rule (e.g. a silhouette with evenodd holes)
   const strokes = [];
   if (g.pixels && g.pixels.length) fill.addPath(new Path2D(AK.pixelsD(g.pixels, g.grid)));
   for (const s of g.shapes || []) {
@@ -104,16 +113,21 @@ AK.compileGlyph = (g) => {
       const q = new Path2D();
       q.addPath(p, m);
       strokes.push({ p: q, sw: s.sw || 6 });
+    } else if (s.rule) {
+      const q = new Path2D();
+      q.addPath(p, m);
+      fills.push({ p: q, rule: s.rule });
     } else {
       fill.addPath(p, m);
     }
   }
-  return { fill, strokes, rule: g.rule || 'nonzero' };
+  return { fill, fills, strokes, rule: g.rule || 'nonzero' };
 };
 
 // Draws in the current transform (glyph space 0–100). Caller sets fillStyle and strokeStyle.
 AK.drawGlyph = (ctx, cg) => {
   ctx.fill(cg.fill, cg.rule);
+  for (const f of cg.fills) ctx.fill(f.p, f.rule);
   if (cg.strokes.length) {
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
@@ -131,7 +145,7 @@ AK.glyphSVG = (g) => {
       const sw = R((s.sw || 6) / AK.matScale(s.m));
       out += `<path d="${AK.esc(s.d)}"${t} fill="none" stroke="currentColor" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round"/>`;
     } else {
-      out += `<path d="${AK.esc(s.d)}"${t}/>`;
+      out += `<path d="${AK.esc(s.d)}"${t}${s.rule ? ` fill-rule="${s.rule}"` : ''}/>`;
     }
   }
   return `<g fill-rule="${g.rule || 'nonzero'}">${out}</g>`;
@@ -232,4 +246,5 @@ AK.normGlyph = (g) => ({
   shapes: Array.isArray(g.shapes) ? g.shapes.map((s) => ({ ...s, m: s.m ? s.m.slice() : undefined })) : [],
   rule: g.rule || 'nonzero',
   v: g.v || 1,
+  gen: g.gen ? JSON.parse(JSON.stringify(g.gen)) : undefined, // generator recipe, kept so the glyph can be re-tuned
 });

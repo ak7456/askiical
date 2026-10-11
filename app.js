@@ -30,12 +30,16 @@ const CHARSETS = [
 
 const SHAPE_DEFAULTS = {
   char: 'A', font: 'Bodoni Moda', weight: 700, italic: false, letterScale: 1, offsetX: 0, offsetY: 0,
+  fitMode: 'font', rowsFont: 60, padCells: 1, padRows: 2,
   cols: 72, ratio: '4:5', cellAspect: 1.5,
+  cellPt: 6, dpi: '300',
   shade: 'distance', shadeDepth: 0.6, angle: 90, noiseScale: 7, blur: 3, halo: 0.15, edge: 0,
   gamma: 1, contrast: 0, threshold: 0.08, grain: 0.08, invert: false,
   rampMode: 'auto', mixTol: 0.08, variation: 0.06, sizeMode: 'fixed', unitScale: 1, seed: 7,
   animate: false, flicker: 0.12, fps: 12,
-  renderMode: 'stamp', fg: '#ecebe4', bg: '#0b0b0a', glyphColorOn: false, glyphColor: '#5d7bff',
+  renderMode: 'stamp', fg: '#ecebe4', bg: '#0b0b0a',
+  themeOn: false, palette: ['#ff48b0', '#0078bf', '#ffe800', '#00a95c'], colorMode: 'noise', colorBlend: 'step',
+  colorScope: 'all', colorScale: 6, colorAngle: 120, colorSpread: 0.12, colorSeed: 3,
   grid: false, gridColor: '#ffffff', gridAlpha: 0.08, bgUnit: '', bgAlpha: 0.22,
   unitFont: 'JetBrains Mono',
 };
@@ -44,27 +48,33 @@ const PRESETS = [
   { id: 'signal', name: 'Signal', sw: ['#050505', '#e9e9e9'], units: ' .,:;i1tfLCG08@', glyphs: ['b-cross', 'b-box'],
     set: { char: 'S', font: 'Bodoni Moda', weight: 800, italic: false, cols: 96, ratio: '4:5', cellAspect: 1.7, shade: 'noise', shadeDepth: 0.55,
       noiseScale: 6, blur: 3, halo: 0.3, edge: 0.15, gamma: 1, contrast: 0.2, threshold: 0.06, grain: 0.12, mixTol: 0.07, variation: 0.08,
-      sizeMode: 'fixed', unitScale: 1, renderMode: 'stamp', fg: '#ececec', bg: '#050505', glyphColorOn: false, grid: false,
+      sizeMode: 'fixed', unitScale: 1, renderMode: 'stamp', fg: '#ececec', bg: '#050505', grid: false,
       bgUnitGlyph: 'b-dot', bgAlpha: 0.16, unitFont: 'JetBrains Mono' } },
   { id: 'blossom', name: 'Blossom', sw: ['#dccfc8', '#2b2626'], units: ' :.+?$%S', glyphs: ['b-petal'],
     set: { char: '꽃', font: 'Nanum Myeongjo', weight: 800, italic: false, cols: 58, ratio: '3:4', cellAspect: 1.45, shade: 'distance', shadeDepth: 0.6,
       blur: 1, halo: 0, edge: 0.1, gamma: 1, contrast: 0.1, threshold: 0.12, grain: 0.05, mixTol: 0.1, variation: 0.05,
-      sizeMode: 'fixed', unitScale: 1, renderMode: 'stamp', fg: '#2b2626', bg: '#dccfc8', glyphColorOn: false, grid: false,
+      sizeMode: 'fixed', unitScale: 1, renderMode: 'stamp', fg: '#2b2626', bg: '#dccfc8', grid: false,
       bgUnitGlyph: '', unitFont: 'IBM Plex Mono' } },
   { id: 'blueprint', name: 'Blueprint', sw: ['#1638d9', '#f2f2f2'], units: ' ', glyphs: ['b-box', 'b-cross', 'b-boxdot', 'b-dot', 'b-check', 'b-solid'],
     set: { char: 'R', font: 'Archivo Black', weight: 400, italic: false, cols: 54, ratio: '3:4', cellAspect: 1, shade: 'noise', shadeDepth: 0.85,
       noiseScale: 5, blur: 2, halo: 0, edge: 0.2, gamma: 1, contrast: 0.3, threshold: 0.3, grain: 0.05, mixTol: 0.1, variation: 0.1,
-      sizeMode: 'fixed', unitScale: 0.82, renderMode: 'knockout', fg: '#f2f2f2', bg: '#1638d9', glyphColorOn: false,
+      sizeMode: 'fixed', unitScale: 0.82, renderMode: 'knockout', fg: '#f2f2f2', bg: '#1638d9',
       grid: true, gridColor: '#8aa0ff', gridAlpha: 0.35, bgUnitGlyph: '', unitFont: 'JetBrains Mono' } },
   { id: 'halftone', name: 'Halftone', sw: ['#e8e6e6', '#e2392f'], units: '', glyphs: ['b-dot'],
     set: { char: 'H', font: 'Playfair Display', weight: 900, italic: true, cols: 46, ratio: '1:1', cellAspect: 1, shade: 'gradient', shadeDepth: 0.85,
       angle: 200, blur: 2, halo: 0.2, edge: 0, gamma: 0.9, contrast: 0, threshold: 0.05, grain: 0.04, mixTol: 0, variation: 0,
-      sizeMode: 'tone', unitScale: 1.05, renderMode: 'stamp', fg: '#e2392f', bg: '#e8e6e6', glyphColorOn: false, grid: false,
+      sizeMode: 'tone', unitScale: 1.05, renderMode: 'stamp', fg: '#e2392f', bg: '#e8e6e6', grid: false,
       bgUnitGlyph: '', unitFont: 'JetBrains Mono' } },
+  { id: 'riso', name: 'Riso', sw: ['#f3eee4', '#ff48b0'], units: ' .:+*#%@', glyphs: ['b-dot', 'b-box', 'b-spark'],
+    set: { char: 'G', font: 'Archivo Black', weight: 400, italic: false, cols: 70, ratio: '4:5', cellAspect: 1.3, shade: 'distance', shadeDepth: 0.5,
+      blur: 3, halo: 0.18, edge: 0.1, gamma: 1, contrast: 0.15, threshold: 0.07, grain: 0.08, mixTol: 0.1, variation: 0.06,
+      sizeMode: 'fixed', unitScale: 1, renderMode: 'stamp', fg: '#1d1d1b', bg: '#f3eee4', grid: false,
+      themeOn: true, palette: ['#ff48b0', '#0078bf', '#ffe800', '#00a95c'], colorMode: 'noise', colorBlend: 'step', colorScope: 'all',
+      colorScale: 5, colorSpread: 0.14, colorSeed: 11, bgUnitGlyph: '', unitFont: 'IBM Plex Mono' } },
   { id: 'sparse', name: 'Organic', sw: ['#000000', '#cfcfcf'], units: ' .-/%HSOLT*+', glyphs: ['b-slash', 'b-spark'],
     set: { char: 'W', font: 'UnifrakturCook', weight: 700, italic: false, cols: 120, ratio: '2:3', cellAspect: 1.7, shade: 'noise', shadeDepth: 0.9,
       noiseScale: 9, blur: 2, halo: 0.1, edge: 0.45, gamma: 1.2, contrast: 0.4, threshold: 0.22, grain: 0.3, mixTol: 0.08, variation: 0.15,
-      sizeMode: 'fixed', unitScale: 1, renderMode: 'stamp', fg: '#cfcfcf', bg: '#000000', glyphColorOn: false, grid: false,
+      sizeMode: 'fixed', unitScale: 1, renderMode: 'stamp', fg: '#cfcfcf', bg: '#000000', grid: false,
       bgUnitGlyph: '', unitFont: 'Space Mono' } },
 ];
 
@@ -109,6 +119,8 @@ function applyProject(p, quiet) {
     .filter((u) => (u.kind === 'char' && typeof u.value === 'string' && u.value.length) || (u.kind === 'glyph' && ids.has(u.glyph)))
     .map((u) => ({ id: u.id || AK.uid(), kind: u.kind, value: u.value, glyph: u.glyph, on: u.on !== false }));
   if (s.bgUnit && !s.units.some((u) => u.id === s.bgUnit)) s.bgUnit = '';
+  s.palette = (Array.isArray(s.palette) ? s.palette : []).filter(Theme.isHex).slice(0, 8);
+  if (!s.palette.length) s.palette = SHAPE_DEFAULTS.palette.slice();
   state = s;
   if (!quiet) afterStructuralChange();
 }
@@ -124,10 +136,47 @@ function compiled(g) {
   return cg;
 }
 
+/* Grid layout.
+   box  — the letter's ink box is fitted into a fixed artboard (cols × ratio); every letter gets its own type size.
+   font — type size comes from the font's ascent + descent filling the artboard height (rows), the baseline sits
+          on the same row for every letter, and the column count follows the letter's advance width.
+          Letters made with the same font and settings therefore line up when placed side by side.
+   Lengths below are in cell widths (a cell is 1 wide and cellAspect tall). */
+const lctx = document.createElement('canvas').getContext('2d');
+const VREF = 'HÅÉbdfhklgjpqyÿ()[]{}|';
+let layoutCache = { key: '', v: null };
+let fontEpoch = 0; // bumps when a web font finishes loading, so metrics are re-measured
+function letterLayout() {
+  const key = [state.fitMode, state.char, state.font, state.weight, state.italic, state.letterScale, state.rowsFont,
+    state.padCells, state.padRows, state.cellAspect, state.cols, state.ratio, fontEpoch].join('|');
+  if (layoutCache.key === key) return layoutCache.v;
+  let v;
+  if (state.fitMode !== 'font') {
+    const [rw, rh] = state.ratio.split(':').map(Number);
+    v = { mode: 'box', cols: state.cols, rows: Math.max(4, Math.round((state.cols * rh) / rw / state.cellAspect)) };
+  } else {
+    const rows = state.rowsFont, H = rows * state.cellAspect;
+    const pad = Math.min(state.padRows, Math.floor((rows - 4) / 2)) * state.cellAspect;
+    lctx.font = letterFontSpec(100);
+    const m = lctx.measureText(state.char || ' ');
+    // vertical box: the larger of the font's declared ascent/descent and the ink of tall/deep reference glyphs.
+    // It never depends on the current letter, so every letter of the font gets the same size and baseline.
+    const ref = lctx.measureText(VREF);
+    const A = Math.max(m.fontBoundingBoxAscent ?? 80, ref.actualBoundingBoxAscent) / 100;
+    const D = Math.max(m.fontBoundingBoxDescent ?? 20, ref.actualBoundingBoxDescent) / 100;
+    const Hbox = H - 2 * pad;
+    const f = (Hbox * state.letterScale) / (A + D); // type size in cell widths
+    const left = Math.min(0, -m.actualBoundingBoxLeft / 100), right = Math.max(m.width / 100, m.actualBoundingBoxRight / 100);
+    const span = (right - left) * f;
+    const cols = Math.max(4, Math.ceil(span - 1e-6) + 2 * state.padCells);
+    v = { mode: 'font', cols, rows, f, originX: (cols - span) / 2 - left * f, baseline: pad + (Hbox - (A + D) * f) / 2 + A * f };
+  }
+  layoutCache = { key, v };
+  return v;
+}
 function dims() {
-  const [rw, rh] = state.ratio.split(':').map(Number);
-  const rows = Math.max(4, Math.round((state.cols * rh) / rw / state.cellAspect));
-  return { cols: state.cols, rows };
+  const l = letterLayout();
+  return { cols: l.cols, rows: l.rows };
 }
 const letterFontSpec = (px) => `${state.italic ? 'italic ' : ''}${state.weight} ${px}px "${state.font}", serif`;
 const unitFontSpec = (px) => `${px}px "${state.unitFont}", ui-monospace, monospace`;
@@ -144,6 +193,7 @@ function ensureFont(spec, text) {
     fontTried.add(key);
     document.fonts.load(spec, text).then(() => {
       rasterKey = '';
+      fontEpoch++;
       densityCache.clear();
       afterStructuralChange();
     }).catch(() => {});
@@ -154,12 +204,13 @@ function ensureFont(spec, text) {
 /* ---------- 1. raster */
 const rc = document.createElement('canvas');
 const rctx = rc.getContext('2d', { willReadFrequently: true });
-let rasterKey = '', coverage = null;
+let rasterKey = '', coverage = null, rasterClip = [];
 const SS = 6;
 
 function raster() {
   const { cols, rows } = dims();
-  const key = [state.char, state.font, state.weight, state.italic, state.letterScale, state.offsetX, state.offsetY, cols, rows, state.cellAspect].join('|');
+  const L = letterLayout();
+  const key = [state.fitMode, state.char, state.font, state.weight, state.italic, state.letterScale, state.offsetX, state.offsetY, cols, rows, state.cellAspect, L.f, fontEpoch].join('|');
   if (key === rasterKey && coverage) return coverage;
   ensureFont(letterFontSpec(100), state.char || 'A');
   const W = cols * SS, H = Math.max(rows, Math.round(rows * state.cellAspect * SS));
@@ -175,11 +226,19 @@ function raster() {
     const bw = m.actualBoundingBoxLeft + m.actualBoundingBoxRight;
     const bh = m.actualBoundingBoxAscent + m.actualBoundingBoxDescent;
     if (bw > 0 && bh > 0) {
-      const fit = Math.min((W * 0.84) / bw, (H * 0.84) / bh) * state.letterScale;
-      rctx.font = letterFontSpec(200 * fit);
-      const m2 = rctx.measureText(text);
-      const x = W / 2 - (m2.actualBoundingBoxRight - m2.actualBoundingBoxLeft) / 2 + state.offsetX * W;
-      const y = H / 2 + (m2.actualBoundingBoxAscent - m2.actualBoundingBoxDescent) / 2 + state.offsetY * H;
+      let x, y;
+      if (L.mode === 'font') {
+        const sy = H / (rows * state.cellAspect); // raster px per cell width, vertically
+        rctx.font = letterFontSpec(L.f * SS);
+        x = (L.originX + state.offsetX * cols) * SS;
+        y = (L.baseline + state.offsetY * rows * state.cellAspect) * sy;
+      } else {
+        const fit = Math.min((W * 0.84) / bw, (H * 0.84) / bh) * state.letterScale;
+        rctx.font = letterFontSpec(200 * fit);
+        const m2 = rctx.measureText(text);
+        x = W / 2 - (m2.actualBoundingBoxRight - m2.actualBoundingBoxLeft) / 2 + state.offsetX * W;
+        y = H / 2 + (m2.actualBoundingBoxAscent - m2.actualBoundingBoxDescent) / 2 + state.offsetY * H;
+      }
       rctx.fillStyle = '#000';
       rctx.fillText(text, x, y);
       const data = rctx.getImageData(0, 0, W, H).data;
@@ -197,6 +256,13 @@ function raster() {
       }
     }
   }
+  // which artboard edges the letter's ink reaches (a sign it is being cut off)
+  rasterClip = [];
+  const edge = (i) => cov[i] > 0.04;
+  for (let c = 0; c < cols; c++) { if (edge(c)) { rasterClip.push('위'); break; } }
+  for (let c = 0; c < cols; c++) { if (edge((rows - 1) * cols + c)) { rasterClip.push('아래'); break; } }
+  for (let r = 0; r < rows; r++) { if (edge(r * cols)) { rasterClip.push('왼쪽'); break; } }
+  for (let r = 0; r < rows; r++) { if (edge(r * cols + cols - 1)) { rasterClip.push('오른쪽'); break; } }
   rasterKey = key;
   coverage = cov;
   toneKey = '';
@@ -320,11 +386,39 @@ function pickUnit(items, t, h) {
   return items[items.length - 1].u;
 }
 
-/* build draw ops: { c, r, u, k, a, col, box } */
+/* colour theme: maps a cell to a palette position, then to a colour from the lookup table */
+function themeCtx(items) {
+  if (!state.themeOn || !state.palette.length) return null;
+  const lut = Theme.lut(state.palette, state.colorBlend);
+  const n = lut.length - 1;
+  const order = new Map(items.map((it, i) => [it.u.id, items.length > 1 ? i / (items.length - 1) : 0.5]));
+  const { cols, rows } = dims();
+  const physH = rows * state.cellAspect, physMax = Math.max(cols, physH);
+  const ang = (state.colorAngle * Math.PI) / 180, ca = Math.cos(ang), sa = Math.sin(ang);
+  const { colorMode: mode, colorSeed: seed, colorSpread: spread, colorScope: scope, colorScale: scale } = state;
+  return {
+    lut,
+    applies: (u) => scope === 'all' || (scope === 'glyphs') === (u.kind === 'glyph'),
+    at(c, r, tt, u) {
+      const px = (c + 0.5 - cols / 2) / physMax, py = ((r + 0.5) * state.cellAspect - physH / 2) / physMax;
+      let p;
+      if (mode === 'tone') p = tt;
+      else if (mode === 'random') p = AK.hash(c, r, seed * 7 + 3);
+      else if (mode === 'noise') p = AK.fbm((px + 0.5) * scale, (py + 0.5) * scale, seed + 77);
+      else if (mode === 'gradient') p = px * ca + py * sa + 0.5;
+      else p = order.has(u.id) ? order.get(u.id) : 0.5;
+      if (spread) p += (AK.hash(c, r, seed * 17 + 9) - 0.5) * 2 * spread;
+      return lut[Math.round(AK.clamp(p) * n)];
+    },
+  };
+}
+
+/* build draw ops: { c, r, u, k, a, col, box } — box is the cell fill colour in knockout mode */
 function buildOps(frame) {
   const t = computeTone();
   const { cols, rows } = dims();
   const items = ramp();
+  const th = themeCtx(items);
   const bgU = state.bgUnit ? state.units.find((u) => u.id === state.bgUnit) : null;
   const thr = state.threshold;
   const knock = state.renderMode === 'knockout';
@@ -345,8 +439,8 @@ function buildOps(frame) {
       const isG = u.kind === 'glyph';
       if (isG) custom++;
       const k = state.sizeMode === 'tone' && !knock ? Math.max(0.12, Math.round(Math.sqrt(tt) * 20) / 20) : 1;
-      const col = knock ? state.bg : isG && state.glyphColorOn ? state.glyphColor : state.fg;
-      ops.push({ c, r, u, k, a: 1, col, box: knock });
+      const ink = th && th.applies(u) ? th.at(c, r, tt, u) : state.fg;
+      ops.push({ c, r, u, k, a: 1, col: knock ? state.bg : ink, box: knock ? ink : null });
     }
   }
   ops.custom = custom;
@@ -380,7 +474,7 @@ function paint(ctx, W, H, ops, px) {
     if (op.box) {
       ctx.setTransform(px, 0, 0, px, 0, 0);
       ctx.globalAlpha = 1;
-      ctx.fillStyle = state.fg;
+      ctx.fillStyle = op.box;
       col = null;
       ctx.fillRect(op.c * cw + inset, op.r * ch + inset, cw - inset * 2 + (inset ? 0 : 0.5), ch - inset * 2 + (inset ? 0 : 0.5));
     }
@@ -397,6 +491,30 @@ const view = $('#view');
 const vctx = view.getContext('2d');
 const stage = $('#stage');
 let frame = 0, lastOps = null, rafId = 0, animTimer = 0;
+
+/* physical output: one cell is cellPt wide; PNG pixels follow from dpi */
+const PT_MM = 25.4 / 72;
+const MAX_SIDE = 16000, MAX_AREA = 120e6; // stay inside browser canvas limits
+function outputSize() {
+  const { cols, rows } = dims();
+  const Wpt = cols * state.cellPt, Hpt = rows * state.cellAspect * state.cellPt;
+  let dpi = parseFloat(state.dpi) || 300;
+  let pxW = Math.round((Wpt / 72) * dpi), pxH = Math.round((Hpt / 72) * dpi);
+  let clamped = false;
+  const k = Math.min(1, MAX_SIDE / Math.max(pxW, pxH), Math.sqrt(MAX_AREA / (pxW * pxH)));
+  if (k < 1) { dpi = Math.floor(dpi * k); pxW = Math.round((Wpt / 72) * dpi); pxH = Math.round((Hpt / 72) * dpi); clamped = true; }
+  return { cols, rows, Wpt, Hpt, dpi, pxW, pxH, clamped };
+}
+const fmtNum = (n, d = 1) => Number(n.toFixed(d)).toLocaleString();
+function renderOutputInfo() {
+  const el = document.getElementById('out-info');
+  if (!el) return;
+  const o = outputSize();
+  el.innerHTML = `${o.cols} × ${o.rows} 셀 · <b>${fmtNum(o.Wpt, 2)} × ${fmtNum(o.Hpt, 2)} pt</b><br>` +
+    `${fmtNum(o.Wpt * PT_MM)} × ${fmtNum(o.Hpt * PT_MM)} mm · PNG ${o.pxW.toLocaleString()} × ${o.pxH.toLocaleString()} px @ ${o.dpi} dpi` +
+    (o.clamped ? `<br>PNG가 너무 커서 ${o.dpi} dpi로 낮춰 저장합니다.` : '') +
+    (rasterClip.length ? `<br><span class="warn">글자가 ${rasterClip.join('·')}에서 잘립니다. 글자 크기를 줄이거나 여백을 늘리세요.</span>` : '');
+}
 
 function artSize() {
   const { cols, rows } = dims();
@@ -421,7 +539,11 @@ function renderNow() {
   paint(vctx, W, H, lastOps, dpr);
   const { cols, rows } = dims();
   const bgCount = lastOps.filter((o) => o.a < 1).length;
-  $('#info').textContent = `${cols} × ${rows} 셀 · 유닛 ${(lastOps.length - bgCount).toLocaleString()} · 커스텀 글리프 ${lastOps.custom.toLocaleString()}`;
+  renderOutputInfo();
+  const clip = rasterClip.length ? ` · ${rasterClip.join('·')} 잘림` : '';
+  $('#info').classList.toggle('warn', !!clip);
+  $('#info').title = clip ? '글자가 아트보드 가장자리에 닿아 잘립니다. 글자 크기를 줄이거나 여백을 늘리세요.' : '';
+  $('#info').textContent = `${cols} × ${rows} 셀${clip} · ${fmtNum(cols * state.cellPt, 2)} pt · 유닛 ${(lastOps.length - bgCount).toLocaleString()} · 커스텀 글리프 ${lastOps.custom.toLocaleString()}`;
 }
 function requestRender() { if (!rafId) rafId = requestAnimationFrame(renderNow); }
 new ResizeObserver(requestRender).observe(stage);
@@ -434,10 +556,12 @@ function syncAnimation() {
 
 /* ---------- controls schema */
 const opt = (pairs) => pairs.map(([v, l]) => [v, l]);
+const themed = (s) => s.themeOn;
 const SECTIONS = [
-  { title: '글자', en: 'SOURCE', items: [
+  { id: 'source', title: '글자', en: 'SOURCE', items: [
     { k: 'char', t: 'text', label: '글자 (한 글자, 최대 4자)' },
     { k: 'font', t: 'select', label: '서체', options: () => LETTER_FONTS.map((f) => [f, f]) },
+    { k: 'fitMode', t: 'seg', label: '글자 맞춤', options: () => opt([['font', '서체 기준'], ['box', '개별 맞춤']]) },
     { k: 'weight', t: 'range', label: '굵기', min: 100, max: 900, step: 100 },
     { k: 'italic', t: 'check', label: '이탤릭' },
     { k: 'letterScale', t: 'range', label: '글자 크기', min: 0.3, max: 1.8, step: 0.01 },
@@ -445,15 +569,42 @@ const SECTIONS = [
     { k: 'offsetY', t: 'range', label: '세로 위치', min: -0.5, max: 0.5, step: 0.01 },
     { id: 'font-file', t: 'file', label: '서체 파일 올리기 (.ttf .otf .woff2)', accept: '.ttf,.otf,.woff,.woff2' },
   ] },
-  { title: '그리드', en: 'GRID', items: [
-    { k: 'cols', t: 'range', label: '가로 셀 수', min: 12, max: 200, step: 1 },
-    { k: 'ratio', t: 'select', label: '아트보드 비율', options: () => opt([['1:1', '1:1 정사각'], ['4:5', '4:5'], ['3:4', '3:4'], ['2:3', '2:3 포스터'], ['1:1.414', 'A 판형'], ['16:9', '16:9']]) },
-    { k: 'cellAspect', t: 'range', label: '셀 세로 비 (높이 ÷ 너비)', min: 0.6, max: 2.4, step: 0.05 },
+  { id: 'color', title: '색', en: 'COLOR', items: [
+    { k: 'bg', t: 'color', label: '배경' },
+    { k: 'fg', t: 'color', label: '기본 유닛 색' },
+    { k: 'themeOn', t: 'check', label: '색 테마 · 여러 색을 섞어 칠하기' },
+    { id: 'theme', t: 'theme', when: themed },
+    { k: 'colorMode', t: 'select', label: '섞는 방식', when: themed, options: () => opt([
+      ['noise', '얼룩 · 노이즈 덩어리로 나눔'], ['tone', '톤 · 밝은 곳부터 짙은 곳 순서'], ['gradient', '방향 · 한쪽에서 다른 쪽으로'],
+      ['random', '무작위 · 셀마다 흩뿌림'], ['unit', '유닛 · 같은 유닛은 같은 색']]) },
+    { k: 'colorBlend', t: 'seg', label: '색 사이', when: themed, options: () => opt([['step', '끊어서'], ['smooth', '부드럽게']]) },
+    { k: 'colorScope', t: 'seg', label: '칠할 유닛', when: themed, options: () => opt([['all', '전체'], ['glyphs', '글리프만'], ['chars', '문자만']]) },
+    { k: 'colorScale', t: 'range', label: '얼룩 크기', min: 1, max: 30, step: 0.5, when: (s) => themed(s) && s.colorMode === 'noise' },
+    { k: 'colorAngle', t: 'range', label: '방향', min: 0, max: 360, step: 1, unit: '°', when: (s) => themed(s) && s.colorMode === 'gradient' },
+    { k: 'colorSpread', t: 'range', label: '경계 흩뿌림', min: 0, max: 0.5, step: 0.01, when: themed },
+    { k: 'colorSeed', t: 'range', label: '색 시드', min: 0, max: 999, step: 1,
+      when: (s) => themed(s) && (s.colorMode === 'random' || s.colorMode === 'noise' || s.colorSpread > 0) },
   ] },
-  { title: '톤', en: 'TONE', items: [
+  { id: 'grid', title: '그리드', en: 'GRID', items: [
+    { k: 'rowsFont', t: 'range', label: '세로 셀 수', min: 12, max: 200, step: 1, when: (s) => s.fitMode === 'font' },
+    { k: 'padRows', t: 'range', label: '위아래 여백 (셀)', min: 0, max: 12, step: 1, when: (s) => s.fitMode === 'font' },
+    { k: 'padCells', t: 'range', label: '좌우 여백 (셀)', min: 0, max: 12, step: 1, when: (s) => s.fitMode === 'font' },
+    { k: 'cols', t: 'range', label: '가로 셀 수', min: 12, max: 200, step: 1, when: (s) => s.fitMode !== 'font' },
+    { k: 'ratio', t: 'select', label: '아트보드 비율', when: (s) => s.fitMode !== 'font', options: () => opt([['1:1', '1:1 정사각'], ['4:5', '4:5'], ['3:4', '3:4'], ['2:3', '2:3 포스터'], ['1:1.414', 'A 판형'], ['16:9', '16:9']]) },
+    { k: 'cellAspect', t: 'range', label: '셀 세로 비 (높이 ÷ 너비)', min: 0.6, max: 2.4, step: 0.05 },
+    { k: 'grid', t: 'check', label: '격자선 그리기' },
+    { k: 'gridColor', t: 'color', label: '격자선 색', when: (s) => s.grid },
+    { k: 'gridAlpha', t: 'range', label: '격자선 농도', min: 0.02, max: 1, step: 0.01, when: (s) => s.grid },
+  ] },
+  { id: 'output', title: '출력', en: 'OUTPUT', items: [
+    { k: 'cellPt', t: 'number', label: '셀 너비 (pt)', min: 0.25, max: 72, step: 0.01 },
+    { k: 'dpi', t: 'seg', label: 'PNG 해상도', options: () => opt([['150', '150 dpi'], ['300', '300 dpi'], ['600', '600 dpi']]) },
+    { id: 'out-info', t: 'info' },
+  ] },
+  { id: 'tone', title: '톤', en: 'TONE', items: [
     { k: 'shade', t: 'select', label: '안쪽 음영', options: () => opt([['solid', '단색'], ['distance', '외곽에서 안쪽으로'], ['gradient', '직선 그라디언트'], ['radial', '원형 그라디언트'], ['noise', '노이즈']]) },
     { k: 'shadeDepth', t: 'range', label: '음영 깊이', min: 0, max: 1, step: 0.01, when: (s) => s.shade !== 'solid' },
-    { k: 'angle', t: 'range', label: '그라디언트 각도', min: 0, max: 360, step: 1, when: (s) => s.shade === 'gradient' },
+    { k: 'angle', t: 'range', label: '그라디언트 각도', min: 0, max: 360, step: 1, unit: '°', when: (s) => s.shade === 'gradient' },
     { k: 'noiseScale', t: 'range', label: '노이즈 크기', min: 1, max: 24, step: 0.5, when: (s) => s.shade === 'noise' },
     { k: 'blur', t: 'range', label: '번짐 반경 (셀)', min: 1, max: 12, step: 1 },
     { k: 'halo', t: 'range', label: '바깥 광채', min: 0, max: 1, step: 0.01 },
@@ -464,28 +615,19 @@ const SECTIONS = [
     { k: 'grain', t: 'range', label: '그레인', min: 0, max: 1, step: 0.01 },
     { k: 'invert', t: 'check', label: '반전 (글자 바깥을 채움)' },
   ] },
-  { title: '매핑', en: 'MAPPING', items: [
-    { k: 'rampMode', t: 'select', label: '램프', options: () => opt([['auto', '자동 (잉크 밀도 순)'], ['manual', '수동 (유닛 칩 순서)']]) },
+  { id: 'map', title: '매핑', en: 'MAPPING', items: [
+    { k: 'rampMode', t: 'seg', label: '램프', options: () => opt([['auto', '자동 · 밀도 순'], ['manual', '수동 · 칩 순서']]) },
     { k: 'mixTol', t: 'range', label: '혼합 폭 (비슷한 밀도끼리 섞기)', min: 0, max: 0.4, step: 0.01, when: (s) => s.rampMode === 'auto' },
     { k: 'variation', t: 'range', label: '무작위 흔들림', min: 0, max: 0.5, step: 0.01 },
-    { k: 'sizeMode', t: 'select', label: '유닛 크기', options: () => opt([['fixed', '고정'], ['tone', '톤에 따라 (하프톤)']]) },
+    { k: 'renderMode', t: 'seg', label: '찍는 방식', options: () => opt([['stamp', '스탬프'], ['knockout', '녹아웃']]) },
+    { k: 'sizeMode', t: 'seg', label: '유닛 크기', options: () => opt([['fixed', '고정'], ['tone', '톤 따라 (하프톤)']]) },
     { k: 'unitScale', t: 'range', label: '유닛 배율', min: 0.3, max: 1.8, step: 0.01 },
+    { k: 'bgUnit', t: 'select', label: '빈 칸 배경 유닛', options: bgUnitOptions },
+    { k: 'bgAlpha', t: 'range', label: '배경 유닛 농도', min: 0.02, max: 1, step: 0.01, when: (s) => !!s.bgUnit },
     { k: 'seed', t: 'range', label: '시드', min: 0, max: 999, step: 1 },
     { k: 'animate', t: 'check', label: '신호 깜빡임 애니메이션' },
     { k: 'flicker', t: 'range', label: '깜빡이는 셀 비율', min: 0.01, max: 1, step: 0.01, when: (s) => s.animate },
     { k: 'fps', t: 'range', label: '속도 (fps)', min: 2, max: 30, step: 1, when: (s) => s.animate },
-  ] },
-  { title: '색', en: 'COLOR', items: [
-    { k: 'renderMode', t: 'select', label: '찍는 방식', options: () => opt([['stamp', '스탬프 (유닛을 찍음)'], ['knockout', '녹아웃 (칸을 채우고 유닛을 뺌)']]) },
-    { k: 'fg', t: 'color', label: '유닛 색' },
-    { k: 'bg', t: 'color', label: '배경 색' },
-    { k: 'glyphColorOn', t: 'check', label: '커스텀 글리프만 다른 색' },
-    { k: 'glyphColor', t: 'color', label: '커스텀 글리프 색', when: (s) => s.glyphColorOn },
-    { k: 'grid', t: 'check', label: '격자선' },
-    { k: 'gridColor', t: 'color', label: '격자선 색', when: (s) => s.grid },
-    { k: 'gridAlpha', t: 'range', label: '격자선 농도', min: 0.02, max: 1, step: 0.01, when: (s) => s.grid },
-    { k: 'bgUnit', t: 'select', label: '빈 칸 배경 유닛', options: bgUnitOptions },
-    { k: 'bgAlpha', t: 'range', label: '배경 유닛 농도', min: 0.02, max: 1, step: 0.01, when: (s) => !!s.bgUnit },
   ] },
 ];
 const ALL_ITEMS = SECTIONS.flatMap((s) => s.items);
@@ -496,16 +638,26 @@ function bgUnitOptions() {
 
 const fmt = (it, v) => {
   const dec = String(it.step).split('.')[1];
-  return dec ? Number(v).toFixed(dec.length) : String(v);
+  return (dec ? Number(v).toFixed(dec.length) : String(v)) + (it.unit || '');
 };
+
+const SEC_KEY = 'askiical:sections';
+let secOpen = { source: true, color: true, grid: false, output: true, tone: true, map: false };
+try { Object.assign(secOpen, JSON.parse(localStorage.getItem(SEC_KEY) || '{}')); } catch (e) { /* defaults */ }
 
 function buildControls() {
   const host = $('#controls');
   host.innerHTML = '';
   for (const sec of SECTIONS) {
-    const el = document.createElement('section');
+    const el = document.createElement('details');
     el.className = 'ctl-sec';
-    el.innerHTML = `<h3><span>${sec.title}</span><em>${sec.en}</em></h3>`;
+    el.open = secOpen[sec.id] !== false;
+    el.innerHTML = `<summary><h3><span>${sec.title}</span><em>${sec.en}</em></h3></summary><div class="ctl-body"></div>`;
+    el.addEventListener('toggle', () => {
+      secOpen[sec.id] = el.open;
+      try { localStorage.setItem(SEC_KEY, JSON.stringify(secOpen)); } catch (e) { /* ignore */ }
+    });
+    const body = el.querySelector('.ctl-body');
     for (const it of sec.items) {
       const row = document.createElement('div');
       row.className = 'ctl ctl-' + it.t;
@@ -515,18 +667,33 @@ function buildControls() {
         row.innerHTML = `<label for="${id}">${it.label}</label><output id="${id}-o" for="${id}"></output><input type="range" id="${id}" min="${it.min}" max="${it.max}" step="${it.step}">`;
         it.input = row.querySelector('input'); it.out = row.querySelector('output');
         it.input.addEventListener('input', () => { set(it.k, +it.input.value); it.out.textContent = fmt(it, it.input.value); });
+        it.input.addEventListener('dblclick', () => { // double-click resets to the default
+          const d = SHAPE_DEFAULTS[it.k];
+          if (typeof d === 'number') { it.input.value = d; set(it.k, d); it.out.textContent = fmt(it, d); AK.paintRange(it.input); }
+        });
+        it.input.title = '더블클릭하면 기본값으로';
       } else if (it.t === 'select') {
         row.innerHTML = `<label for="${id}">${it.label}</label><select id="${id}"></select>`;
         it.input = row.querySelector('select');
         it.input.addEventListener('change', () => set(it.k, it.input.value));
+      } else if (it.t === 'seg') {
+        row.innerHTML = `<span class="lbl" id="${id}-l">${it.label}</span><div class="seg-inline" role="group" aria-labelledby="${id}-l"></div>`;
+        it.input = row.querySelector('.seg-inline');
+        it.input.innerHTML = it.options().map(([v, l]) => `<button type="button" data-v="${AK.esc(v)}">${AK.esc(l)}</button>`).join('');
+        it.input.addEventListener('click', (e) => {
+          const b = e.target.closest('button');
+          if (!b) return;
+          set(it.k, b.dataset.v);
+          syncSeg(it);
+        });
       } else if (it.t === 'check') {
         row.innerHTML = `<label class="chk"><input type="checkbox" id="${id}"> <span>${it.label}</span></label>`;
         it.input = row.querySelector('input');
         it.input.addEventListener('change', () => set(it.k, it.input.checked));
       } else if (it.t === 'color') {
-        row.innerHTML = `<label for="${id}">${it.label}</label><input type="color" id="${id}">`;
-        it.input = row.querySelector('input');
-        it.input.addEventListener('input', () => set(it.k, it.input.value));
+        row.innerHTML = `<label for="${id}">${it.label}</label><span class="color-pick"><code id="${id}-hex"></code><input type="color" id="${id}"></span>`;
+        it.input = row.querySelector('input'); it.out = row.querySelector('code');
+        it.input.addEventListener('input', () => { set(it.k, it.input.value); it.out.textContent = it.input.value; });
       } else if (it.t === 'text') {
         row.innerHTML = `<label for="${id}">${it.label}</label><input type="text" id="${id}" maxlength="8" autocomplete="off">`;
         it.input = row.querySelector('input');
@@ -534,11 +701,28 @@ function buildControls() {
       } else if (it.t === 'file') {
         row.innerHTML = `<label class="btn" for="${id}">${it.label}</label><input type="file" id="${id}" accept="${it.accept}" hidden>`;
         row.querySelector('input').addEventListener('change', onFontFile);
+      } else if (it.t === 'theme') {
+        buildThemeUI(row);
+      } else if (it.t === 'number') {
+        row.innerHTML = `<label for="${id}">${it.label}</label><input type="number" id="${id}" min="${it.min}" max="${it.max}" step="${it.step}" inputmode="decimal">`;
+        it.input = row.querySelector('input');
+        it.input.addEventListener('input', () => {
+          const v = parseFloat(it.input.value);
+          if (Number.isFinite(v) && v >= it.min && v <= it.max) { it.input.removeAttribute('aria-invalid'); set(it.k, v); }
+          else it.input.setAttribute('aria-invalid', 'true');
+        });
+        it.input.addEventListener('change', () => { it.input.value = state[it.k]; it.input.removeAttribute('aria-invalid'); });
+      } else if (it.t === 'info') {
+        row.innerHTML = `<p class="note out-info" id="${it.id}" aria-live="polite"></p>`;
       }
-      el.appendChild(row);
+      body.appendChild(row);
     }
     host.appendChild(el);
   }
+}
+
+function syncSeg(it) {
+  it.input.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.v === state[it.k])));
 }
 
 function fillSelect(it) {
@@ -552,11 +736,15 @@ function syncControls() {
     if (!it.k) continue;
     const v = state[it.k];
     if (it.t === 'select') fillSelect(it);
+    else if (it.t === 'seg') syncSeg(it);
     else if (it.t === 'check') it.input.checked = !!v;
     else if (it.t === 'range') { it.input.value = v; it.out.textContent = fmt(it, v); }
+    else if (it.t === 'color') { it.input.value = v; it.out.textContent = v; }
     else if (it.input !== document.activeElement) it.input.value = v;
   }
   syncVisibility();
+  renderThemeUI();
+  AK.paintRanges($('#controls'));
   const uf = $('#unit-font');
   uf.innerHTML = UNIT_FONTS.map((f) => `<option>${AK.esc(f)}</option>`).join('');
   uf.value = state.unitFont;
@@ -565,13 +753,103 @@ function syncVisibility() {
   for (const it of ALL_ITEMS) if (it.when) it.row.hidden = !it.when(state);
 }
 
+/* ---------- colour theme panel */
+function buildThemeUI(row) {
+  row.innerHTML =
+    `<div class="theme-presets" id="theme-presets" role="group" aria-label="테마 팔레트">${Theme.PRESETS.map((p, i) =>
+      `<button type="button" data-i="${i}" title="${AK.esc(p.name)} · 배경과 팔레트를 함께 바꿉니다"><span class="stripe" style="background:${p.bg}">${p.colors.map((c) => `<i style="background:${c}"></i>`).join('')}</span><span>${AK.esc(p.name)}</span></button>`).join('')}</div>` +
+    `<div class="swatches" id="swatches" aria-label="팔레트 색"></div>` +
+    `<canvas class="pal-bar" id="pal-bar" aria-label="팔레트가 퍼지는 순서"></canvas>` +
+    `<div class="row-btns"><button type="button" id="pal-harmony" title="어울리는 색 조합을 무작위로 만듭니다">조화 팔레트</button>` +
+    `<button type="button" id="pal-shuffle">순서 섞기</button><button type="button" id="pal-rev">뒤집기</button></div>`;
+  const usePalette = (bg, colors, msg) => {
+    state.palette = colors.slice(0, 8);
+    state.bg = bg;
+    state.themeOn = true;
+    syncControls();
+    renderRamp();
+    persist();
+    requestRender();
+    if (msg) toast(msg);
+  };
+  row.querySelector('#theme-presets').onclick = (e) => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    const p = Theme.PRESETS[+b.dataset.i];
+    usePalette(p.bg, p.colors);
+  };
+  row.querySelector('#pal-harmony').onclick = () => {
+    const h = Theme.harmony((Math.random() * 1e9) | 0);
+    usePalette(h.bg, h.colors, `${h.name} 배색으로 팔레트를 만들었습니다.`);
+  };
+  row.querySelector('#pal-shuffle').onclick = () => {
+    const a = state.palette;
+    for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
+    themeChanged(true);
+  };
+  row.querySelector('#pal-rev').onclick = () => { state.palette.reverse(); themeChanged(true); };
+}
+
+function themeChanged(rebuild) {
+  if (rebuild) renderThemeUI(); else drawPalBar();
+  renderRamp();
+  persist();
+  requestRender();
+}
+
+function renderThemeUI() {
+  const box = $('#swatches');
+  if (!box) return;
+  box.innerHTML = '';
+  state.palette.forEach((c, i) => {
+    const sw = document.createElement('div');
+    sw.className = 'sw';
+    sw.innerHTML = `<input type="color" value="${c}" aria-label="팔레트 색 ${i + 1}" title="${c}">` +
+      (state.palette.length > 1 ? `<button type="button" class="sw-x" aria-label="색 ${i + 1} 빼기">×</button>` : '');
+    sw.querySelector('input').addEventListener('input', (e) => { state.palette[i] = e.target.value; e.target.title = e.target.value; themeChanged(false); });
+    const x = sw.querySelector('.sw-x');
+    if (x) x.onclick = () => { state.palette.splice(i, 1); themeChanged(true); };
+    box.appendChild(sw);
+  });
+  if (state.palette.length < 8) {
+    const add = document.createElement('button');
+    add.type = 'button';
+    add.className = 'sw-add';
+    add.setAttribute('aria-label', '색 추가');
+    add.textContent = '+';
+    add.onclick = () => {
+      const h = Theme.harmony((Math.random() * 1e9) | 0).colors;
+      state.palette.push(h[Math.floor(Math.random() * h.length)]);
+      themeChanged(true);
+    };
+    box.appendChild(add);
+  }
+  drawPalBar();
+}
+
+function drawPalBar() {
+  const cv = $('#pal-bar');
+  if (!cv) return;
+  const r = cv.getBoundingClientRect();
+  if (!r.width) return;
+  const dpr = window.devicePixelRatio || 1;
+  cv.width = Math.round(r.width * dpr); cv.height = Math.round(r.height * dpr);
+  const c = cv.getContext('2d');
+  const lut = Theme.lut(state.palette, state.colorBlend, 128);
+  const w = cv.width / lut.length;
+  lut.forEach((col, i) => { c.fillStyle = col; c.fillRect(Math.floor(i * w), 0, Math.ceil(w) + 1, cv.height); });
+}
+
 const LAYOUT_KEYS = new Set(['cols', 'ratio', 'cellAspect']);
+const THEME_KEYS = new Set(['themeOn', 'colorBlend', 'colorScope', 'colorMode', 'bg', 'fg']);
 function set(k, v) {
   state[k] = v;
   if (k === 'cellAspect') densityCache.clear();
   if (k === 'animate' || k === 'fps') syncAnimation();
   syncVisibility();
-  if (LAYOUT_KEYS.has(k) || k === 'unitFont') renderRamp();
+  if (k === 'themeOn' && v) requestAnimationFrame(renderThemeUI); // swatches were hidden, size the bar now
+  if (k === 'colorBlend') drawPalBar();
+  if (LAYOUT_KEYS.has(k) || THEME_KEYS.has(k) || k === 'unitFont') renderRamp();
   persist();
   requestRender();
 }
@@ -582,7 +860,9 @@ async function onFontFile(e) {
   if (!f) return;
   try {
     const name = 'User ' + f.name.replace(/\.[^.]+$/, '').slice(0, 24);
-    const face = new FontFace(name, await f.arrayBuffer());
+    const buf = await f.arrayBuffer();
+    userFonts[name] = buf.slice(0);
+    const face = new FontFace(name, buf);
     await face.load();
     document.fonts.add(face);
     if (!LETTER_FONTS.includes(name)) LETTER_FONTS.push(name);
@@ -617,6 +897,7 @@ function drawGlyphThumb(cv, g, fg) {
 let dragFrom = -1;
 function renderUnits() {
   const host = $('#unit-list');
+  $('#unit-count').textContent = `${state.units.filter((u) => u.on).length}/${state.units.length}`;
   host.style.setProperty('--unit-font', `"${state.unitFont}", ui-monospace, monospace`);
   host.innerHTML = '';
   const text = getComputedStyle(document.documentElement).getPropertyValue('--text').trim() || '#e8e6dd';
@@ -670,8 +951,9 @@ function renderRamp() {
   c.font = unitFontSpec(charPx(cw, ch));
   c.textAlign = 'center'; c.textBaseline = 'middle';
   const x0 = (r.width - cw * n) / 2;
+  const th = themeCtx(items);
   items.forEach((it, i) => {
-    const col = it.u.kind === 'glyph' && state.glyphColorOn ? state.glyphColor : state.fg;
+    const col = th && th.applies(it.u) ? th.lut[Math.round((n > 1 ? i / (n - 1) : 0.5) * (th.lut.length - 1))] : state.fg;
     c.fillStyle = col; c.strokeStyle = col;
     drawUnit(c, it.u, x0 + (i + 0.5) * cw, ch / 2 + 2, cw, ch, 1, dpr, 1);
     c.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -688,17 +970,19 @@ function renderRamp() {
 
 function renderGlyphLib() {
   const host = $('#glyph-lib');
+  $('#glyph-count').textContent = state.glyphs.length;
   host.innerHTML = '';
   const text = getComputedStyle(document.documentElement).getPropertyValue('--text').trim() || '#e8e6dd';
   for (const g of state.glyphs) {
     const used = state.units.some((u) => u.kind === 'glyph' && u.glyph === g.id);
     const card = document.createElement('div');
     card.className = 'gcard' + (used ? ' used' : '');
-    card.innerHTML = `<canvas width="80" height="80"></canvas><span class="gname">${AK.esc(g.name)}</span>` +
-      `<span class="gd">잉크 ${Math.round(measureGlyph(g) * 100)}%</span>` +
-      `<div class="row-btns"><button type="button" data-a="use">${used ? '빼기' : '유닛 +'}</button><button type="button" data-a="edit">편집</button></div>`;
+    card.innerHTML = `<button type="button" class="gcard-main" aria-pressed="${used}" title="${used ? '눌러서 유닛에서 빼기' : '눌러서 유닛에 넣기'}">` +
+      `<canvas width="80" height="80"></canvas><span class="gname">${AK.esc(g.name)}</span><span class="gd">잉크 ${Math.round(measureGlyph(g) * 100)}%</span></button>` +
+      `<div class="gcard-act"><button type="button" data-a="edit">편집</button>` +
+      (g.gen ? '<button type="button" data-a="tune" title="생성기에서 두께, 밀도, 스타일 다시 조절">조절</button>' : '') + '</div>';
     drawGlyphThumb(card.querySelector('canvas'), g, text);
-    card.querySelector('[data-a="use"]').onclick = () => {
+    card.querySelector('.gcard-main').onclick = () => {
       if (used) {
         state.units = state.units.filter((u) => !(u.kind === 'glyph' && u.glyph === g.id));
         if (state.bgUnit && !state.units.some((u) => u.id === state.bgUnit)) state.bgUnit = '';
@@ -706,6 +990,7 @@ function renderGlyphLib() {
       afterUnitsChange();
     };
     card.querySelector('[data-a="edit"]').onclick = () => openEditor(g, false);
+    if (g.gen) card.querySelector('[data-a="tune"]').onclick = () => openGenerator(g);
     host.appendChild(card);
   }
 }
@@ -775,6 +1060,42 @@ function openEditor(g, isNew) {
     },
   });
 }
+/* ---------- keyword generator bridge */
+const unitLabel = (u) => (u.kind === 'char' ? `‘${u.value === ' ' ? '공백' : u.value}’` : (glyphById(u.glyph) || {}).name || '글리프');
+function describeDensity(g) {
+  const v = measure({ kind: 'glyph', glyph: g.id, _g: g });
+  const others = state.units
+    .filter((u) => u.on && !(u.kind === 'glyph' && u.glyph === g.id) && (u.kind === 'char' || glyphById(u.glyph)))
+    .map((u) => ({ u, d: measure(u) }))
+    .sort((a, b) => a.d - b.d);
+  const pct = (d) => `${Math.round(d * 100)}%`;
+  let where = '';
+  if (others.length) {
+    const lo = others.filter((x) => x.d <= v).pop();
+    const hi = others.find((x) => x.d > v);
+    if (lo && hi) where = ` · 지금 램프에서 ${unitLabel(lo.u)} ${pct(lo.d)}와 ${unitLabel(hi.u)} ${pct(hi.d)} 사이에 들어갑니다.`;
+    else if (lo) where = ` · 지금 램프에서 가장 짙은 유닛이 됩니다 (다음은 ${unitLabel(lo.u)} ${pct(lo.d)}).`;
+    else if (hi) where = ` · 지금 램프에서 가장 밝은 유닛이 됩니다 (다음은 ${unitLabel(hi.u)} ${pct(hi.d)}).`;
+  }
+  return `잉크 ${pct(v)}${where}`;
+}
+function openGenerator(g) {
+  GlyphGen.open({
+    fg: state.fg === state.bg ? '#ffffff' : state.fg,
+    bg: state.bg,
+    describe: describeDensity,
+    onSave: (ng, isNew) => {
+      const i = state.glyphs.findIndex((x) => x.id === ng.id);
+      if (i >= 0) state.glyphs[i] = ng; else state.glyphs.push(ng);
+      if (isNew) state.units.push({ id: AK.uid(), kind: 'glyph', glyph: ng.id, on: true });
+      afterUnitsChange();
+      toast(isNew ? `글리프 “${ng.name}”를 만들고 유닛에 넣었습니다.` : `글리프 “${ng.name}”를 다시 조절했습니다.`);
+    },
+    onEdit: (ng, editing) => openEditor(ng, !editing),
+  }, g);
+}
+$('#gen-glyph').onclick = () => openGenerator();
+
 $('#new-glyph').onclick = () => openEditor({ name: '새 글리프 ' + (state.glyphs.length + 1), grid: 16 }, true);
 $('#svg-import').onchange = async (e) => {
   const f = e.target.files[0];
@@ -797,6 +1118,12 @@ function applyPreset(p) {
   }
   const s = { ...SHAPE_DEFAULTS, ...p.set };
   delete s.bgUnitGlyph;
+  // presets describe a look; the print setup (fit mode, cell size, dpi) stays the user's
+  s.fitMode = state.fitMode; s.cellPt = state.cellPt; s.dpi = state.dpi;
+  if (!p.set.rowsFont) {
+    const [rw, rh] = s.ratio.split(':').map(Number);
+    s.rowsFont = Math.max(12, Math.round((s.cols * rh) / rw / s.cellAspect));
+  }
   s.glyphs = keepGlyphs;
   s.units = [...new Set([...p.units])].map((c) => ({ id: AK.uid(), kind: 'char', value: c, on: true }))
     .concat(p.glyphs.map((id) => ({ id: AK.uid(), kind: 'glyph', glyph: id, on: true })));
@@ -825,52 +1152,62 @@ function download(name, blob) {
   a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 }
-const baseName = () => 'askiical-' + (state.char || 'glyph').replace(/[^\p{L}\p{N}]/gu, '') + '-' + state.cols;
+const baseName = () => 'askiical-' + (state.char || 'glyph').replace(/[^\p{L}\p{N}]/gu, '') + '-' + dims().cols + 'x' + dims().rows;
+
+// PNG pHYs chunk so Illustrator / Photoshop place the image at its physical size
+const CRC_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; }
+  return t;
+})();
+const crc32 = (bytes) => { let c = 0xffffffff; for (const b of bytes) c = CRC_TABLE[(c ^ b) & 255] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; };
+async function withDpi(blob, dpi) {
+  const src = new Uint8Array(await blob.arrayBuffer());
+  const ppm = Math.round(dpi / 0.0254);
+  const chunk = new Uint8Array(21);
+  const dv = new DataView(chunk.buffer);
+  dv.setUint32(0, 9);
+  chunk.set([0x70, 0x48, 0x59, 0x73], 4); // "pHYs"
+  dv.setUint32(8, ppm); dv.setUint32(12, ppm); chunk[16] = 1; // unit: metre
+  dv.setUint32(17, crc32(chunk.subarray(4, 17)));
+  const at = 33; // signature (8) + IHDR chunk (25)
+  const out = new Uint8Array(src.length + chunk.length);
+  out.set(src.subarray(0, at)); out.set(chunk, at); out.set(src.subarray(at), at + chunk.length);
+  return new Blob([out], { type: 'image/png' });
+}
 
 $('#ex-png').onclick = () => {
-  const { aw, ah } = artSize();
-  const W = 2400, H = Math.round((W * ah) / aw);
+  const o = outputSize();
   const cv = document.createElement('canvas');
-  cv.width = W; cv.height = H;
-  paint(cv.getContext('2d'), W, H, buildOps(frame), 1);
-  cv.toBlob((b) => { download(baseName() + '.png', b); toast('PNG 2400px로 내보냈습니다.'); }, 'image/png');
+  cv.width = o.pxW; cv.height = o.pxH;
+  paint(cv.getContext('2d'), o.pxW, o.pxH, buildOps(frame), 1);
+  cv.toBlob(async (b) => {
+    if (!b) { toast('PNG를 만들지 못했습니다. 셀 너비나 해상도를 낮춰 보세요.'); return; }
+    download(baseName() + `-${o.dpi}dpi.png`, await withDpi(b, o.dpi));
+    toast(`PNG ${o.pxW.toLocaleString()} × ${o.pxH.toLocaleString()} px (${o.dpi} dpi, ${fmtNum(o.Wpt, 2)} × ${fmtNum(o.Hpt, 2)} pt)로 내보냈습니다.`);
+  }, 'image/png');
 };
 
-$('#ex-svg').onclick = () => {
-  const { cols, rows } = dims();
-  const { aw, ah } = artSize();
-  const W = cols * 12, H = AK.round((W * ah) / aw);
-  const cw = W / cols, ch = H / rows;
-  const fpx = charPx(cw, ch) * state.unitScale;
-  const ops = buildOps(frame);
-  const used = new Set();
-  const body = [];
-  if (state.grid) {
-    let d = '';
-    for (let c = 0; c <= cols; c++) d += `M${AK.round(c * cw)} 0V${H}`;
-    for (let r = 0; r <= rows; r++) d += `M0 ${AK.round(r * ch)}H${W}`;
-    body.push(`<path d="${d}" stroke="${state.gridColor}" stroke-opacity="${state.gridAlpha}" stroke-width="${AK.round(Math.min(cw, ch) * 0.04)}" fill="none"/>`);
+const userFonts = {}; // uploaded font files by family, for outline export
+
+$('#ex-svg').onclick = async () => {
+  const btn = $('#ex-svg');
+  btn.disabled = true;
+  toast('아웃라인 SVG를 만드는 중입니다…');
+  try {
+    await Outline.ensureFonts();
+    for (const [fam, buf] of Object.entries(userFonts)) Outline.addFont(fam, buf);
+    const o = outputSize();
+    const res = Outline.build({ state, dims: dims(), ops: buildOps(frame), glyphById, charPx, W: o.Wpt, H: o.Hpt, unit: 'pt' });
+    download(baseName() + '-outline.svg', new Blob([res.svg], { type: 'image/svg+xml' }));
+    toast(res.missing.length
+      ? `아웃라인 SVG로 저장했습니다. 서체에 없는 문자 ${res.missing.join(' ')} 는 텍스트로 남았습니다.`
+      : `아웃라인 SVG로 저장했습니다. 모든 유닛이 채움 패스입니다 (${res.count.toLocaleString()}개, ${res.colors}색).`);
+  } catch (err) {
+    toast('SVG를 만들지 못했습니다: ' + err.message);
+  } finally {
+    btn.disabled = false;
   }
-  const inset = state.grid ? Math.min(cw, ch) * 0.06 : 0;
-  for (const op of ops) {
-    const x = (op.c + 0.5) * cw, y = (op.r + 0.5) * ch;
-    const a = op.a < 1 ? ` opacity="${op.a}"` : '';
-    if (op.box) body.push(`<rect x="${AK.round(op.c * cw + inset)}" y="${AK.round(op.r * ch + inset)}" width="${AK.round(cw - 2 * inset)}" height="${AK.round(ch - 2 * inset)}" fill="${state.fg}"/>`);
-    if (op.u.kind === 'char') {
-      if (op.u.value === ' ') continue;
-      body.push(`<text x="${AK.round(x)}" y="${AK.round(y)}" font-size="${AK.round(fpx * op.k)}" fill="${op.col}"${a}>${AK.esc(op.u.value)}</text>`);
-    } else {
-      used.add(op.u.glyph);
-      const s = (Math.min(cw, ch) * state.unitScale * op.k) / 100;
-      body.push(`<use href="#g-${op.u.glyph}" transform="matrix(${AK.round(s * 1000) / 1000} 0 0 ${AK.round(s * 1000) / 1000} ${AK.round(x - 50 * s)} ${AK.round(y - 50 * s)})" fill="${op.col}" color="${op.col}"${a}/>`);
-    }
-  }
-  const defs = [...used].map((id) => { const g = glyphById(id); return g ? `<g id="g-${id}">${AK.glyphSVG(g)}</g>` : ''; }).join('');
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">` +
-    `<defs>${defs}</defs><rect width="100%" height="100%" fill="${state.bg}"/>` +
-    `<g font-family="'${state.unitFont}', monospace" text-anchor="middle" dominant-baseline="central">${body.join('')}</g></svg>`;
-  download(baseName() + '.svg', new Blob([svg], { type: 'image/svg+xml' }));
-  toast(`SVG로 내보냈습니다. 커스텀 글리프 ${used.size}종은 벡터로 들어갑니다.`);
 };
 
 function asciiText() {
@@ -913,7 +1250,7 @@ function toast(msg) {
 }
 
 /* ---------- boot */
-window.addEventListener('resize', () => renderRamp());
+window.addEventListener('resize', () => { renderRamp(); drawPalBar(); });
 buildControls();
 loadStored();
 afterStructuralChange();
