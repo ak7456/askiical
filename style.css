@@ -190,7 +190,7 @@ details[open].ctl-sec > summary h3 span::before { transform: rotate(45deg); marg
 .ctl > label, .ctl > .lbl { color: var(--mute); font-size: 12px; }
 .ctl output { font: 11px var(--f-mono); font-variant-numeric: tabular-nums; color: var(--text); }
 .ctl input[type="range"], .ctl select, .ctl input[type="text"], .ctl .seg-inline { grid-column: 1 / -1; }
-.ctl-check, .ctl-file, .ctl-theme { grid-template-columns: minmax(0, 1fr); }
+.ctl-check, .ctl-file, .ctl-theme, .ctl-buttons, .ctl-note, .ctl-text-line { grid-template-columns: minmax(0, 1fr); }
 .chk { display: inline-flex; align-items: center; gap: 9px; cursor: pointer; color: var(--text); font-size: 12px; }
 .color-pick { display: inline-flex; align-items: center; gap: 8px; }
 .color-pick code { font: 11px var(--f-mono); color: var(--mute); text-transform: uppercase; }
