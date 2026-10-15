@@ -557,10 +557,15 @@ function buildOps(frame) {
 }
 
 /* ---------- 4. paint */
-function paint(ctx, W, H, ops, px) {
+// W × H: artboard size in CSS px; px: device pixel ratio.
+// vp (optional, zoomed preview): the visible window { x, y, w, h } of the artboard; only cells inside it are drawn.
+function paint(ctx, W, H, ops, px, vp) {
   const { cols, rows } = dims();
   const cw = W / cols, ch = H / rows;
-  ctx.setTransform(px, 0, 0, px, 0, 0);
+  const ox = vp ? vp.x : 0, oy = vp ? vp.y : 0;
+  const base = () => ctx.setTransform(px, 0, 0, px, -ox * px, -oy * px);
+  if (vp) { ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height); }
+  base();
   ctx.globalAlpha = 1;
   ctx.fillStyle = state.bg;
   ctx.fillRect(0, 0, W, H);
@@ -579,9 +584,12 @@ function paint(ctx, W, H, ops, px) {
   ctx.textBaseline = 'middle';
   let col = null;
   const inset = state.grid ? Math.min(cw, ch) * 0.06 : 0;
+  const c0 = vp ? Math.floor(ox / cw) - 1 : -1, c1 = vp ? Math.ceil((ox + vp.w) / cw) + 1 : cols + 1;
+  const r0 = vp ? Math.floor(oy / ch) - 1 : -1, r1 = vp ? Math.ceil((oy + vp.h) / ch) + 1 : rows + 1;
   for (const op of ops) {
+    if (op.c < c0 || op.c > c1 || op.r < r0 || op.r > r1) continue;
     if (op.box) {
-      ctx.setTransform(px, 0, 0, px, 0, 0);
+      base();
       ctx.globalAlpha = 1;
       ctx.fillStyle = op.box;
       col = null;
@@ -589,13 +597,18 @@ function paint(ctx, W, H, ops, px) {
     }
     if (op.col !== col) { col = op.col; ctx.fillStyle = col; ctx.strokeStyle = col; }
     ctx.globalAlpha = op.a;
-    drawUnit(ctx, op.u, (op.c + 0.5) * cw, (op.r + 0.5) * ch, cw, ch, op.k, px, state.unitScale);
+    drawUnit(ctx, op.u, (op.c + 0.5) * cw - ox, (op.r + 0.5) * ch - oy, cw, ch, op.k, px, state.unitScale);
   }
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.globalAlpha = 1;
 }
 
-/* ---------- view */
+/* ---------- view (zoom & pan) */
+let zoom = 1;                       // 1 = whole artboard fits the stage
+let zoomLimits = { min: 1, max: 8 };
+const view_ = { cx: 0.5, cy: 0.5 };  // centre of the visible window, as artboard fractions
+let viewGeom = null;
+const printScale = () => (state.cellPt * 96) / 72; // CSS px per cell at actual print size
 const view = $('#view');
 const vctx = view.getContext('2d');
 const stage = $('#stage');
@@ -639,15 +652,29 @@ function renderNow() {
   const cs = getComputedStyle(stage);
   const availW = sr.width - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
   const availH = sr.height - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
-  const scale = Math.max(0.1, Math.min(availW / aw, availH / ah));
-  const W = Math.floor(aw * scale), H = Math.floor(ah * scale);
+  const fit = Math.max(0.1, Math.min(availW / aw, availH / ah)); // CSS px per cell width when the whole artboard fits
+  zoomLimits = { min: Math.min(1, printScale() / fit), max: Math.max(1, 64 / fit) };
+  zoom = AK.clamp(zoom, zoomLimits.min, zoomLimits.max);
+  const scale = fit * zoom;
   const dpr = Math.min(3, window.devicePixelRatio || 1);
+  const artW = aw * scale, artH = ah * scale;
+  // the canvas never grows past the stage; when zoomed in it shows a window of the artboard
+  const W = Math.floor(Math.min(artW, availW)), H = Math.floor(Math.min(artH, availH));
+  const vp = {
+    x: AK.clamp(view_.cx * artW - W / 2, 0, Math.max(0, artW - W)),
+    y: AK.clamp(view_.cy * artH - H / 2, 0, Math.max(0, artH - H)),
+    w: W, h: H,
+  };
+  view_.cx = (vp.x + W / 2) / artW; view_.cy = (vp.y + H / 2) / artH; // keep the centre inside the artboard
+  viewGeom = { artW, artH, vp, scale };
   if (view.width !== Math.round(W * dpr) || view.height !== Math.round(H * dpr)) {
     view.width = Math.round(W * dpr); view.height = Math.round(H * dpr);
   }
   view.style.width = W + 'px'; view.style.height = H + 'px';
+  view.classList.toggle('zoomed', artW > W + 1 || artH > H + 1);
   lastOps = buildOps(frame);
-  paint(vctx, W, H, lastOps, dpr);
+  paint(vctx, artW, artH, lastOps, dpr, vp);
+  renderZoomUI(scale);
   const { cols, rows } = dims();
   const bgCount = lastOps.filter((o) => o.a < 1).length;
   renderOutputInfo();
@@ -658,6 +685,70 @@ function renderNow() {
   $('#info').textContent = `${cols} × ${rows} 셀${clip} · ${fmtNum(cols * state.cellPt, 2)} pt · 유닛 ${(lastOps.length - bgCount).toLocaleString()} · 커스텀 글리프 ${lastOps.custom.toLocaleString()}`;
 }
 function requestRender() { if (!rafId) rafId = requestAnimationFrame(renderNow); }
+
+function renderZoomUI(scale) {
+  const o = $('#zoom-o');
+  o.textContent = `${Math.round((scale / printScale()) * 100)}%`;
+  o.title = `인쇄 크기 대비 배율 · 셀 하나가 화면에서 ${scale.toFixed(1)}px`;
+  $('#zoom [data-z="fit"]').setAttribute('aria-pressed', String(Math.abs(zoom - 1) < 1e-3));
+}
+// zoom to z (multiples of "fit"), keeping the artboard point under the anchor (canvas CSS px) in place
+function setZoom(z, anchor) {
+  const g = viewGeom;
+  const nz = AK.clamp(z, zoomLimits.min, zoomLimits.max);
+  if (g && anchor) {
+    const fx = (g.vp.x + anchor.x) / g.artW, fy = (g.vp.y + anchor.y) / g.artH;
+    const k = nz / zoom, artW = g.artW * k, artH = g.artH * k;
+    view_.cx = fx + (g.vp.w / 2 - anchor.x) / artW;
+    view_.cy = fy + (g.vp.h / 2 - anchor.y) / artH;
+  }
+  zoom = nz;
+  requestRender();
+}
+const canvasPoint = (e) => { const r = view.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
+$('#zoom').addEventListener('click', (e) => {
+  const b = e.target.closest('button');
+  if (!b || !viewGeom) return;
+  const mid = { x: viewGeom.vp.w / 2, y: viewGeom.vp.h / 2 };
+  const fit = viewGeom.scale / zoom;
+  if (b.dataset.z === 'in') setZoom(zoom * 1.5, mid);
+  else if (b.dataset.z === 'out') setZoom(zoom / 1.5, mid);
+  else if (b.dataset.z === 'fit') { view_.cx = 0.5; view_.cy = 0.5; setZoom(1); }
+  else if (b.dataset.z === 'print') setZoom(printScale() / fit, mid);
+});
+view.addEventListener('wheel', (e) => {
+  if (!viewGeom) return;
+  if (e.ctrlKey || e.metaKey) { // pinch or ctrl/cmd + wheel
+    e.preventDefault();
+    setZoom(zoom * Math.exp(-e.deltaY * 0.01), canvasPoint(e));
+  } else if (view.classList.contains('zoomed')) { // scroll pans the zoomed view
+    e.preventDefault();
+    view_.cx += e.deltaX / viewGeom.artW;
+    view_.cy += e.deltaY / viewGeom.artH;
+    requestRender();
+  }
+}, { passive: false });
+let panFrom = null;
+view.addEventListener('pointerdown', (e) => {
+  if (e.button !== 0 || !view.classList.contains('zoomed')) return;
+  panFrom = { x: e.clientX, y: e.clientY, cx: view_.cx, cy: view_.cy };
+  view.setPointerCapture(e.pointerId);
+  view.classList.add('panning');
+});
+view.addEventListener('pointermove', (e) => {
+  if (!panFrom || !viewGeom) return;
+  view_.cx = panFrom.cx - (e.clientX - panFrom.x) / viewGeom.artW;
+  view_.cy = panFrom.cy - (e.clientY - panFrom.y) / viewGeom.artH;
+  requestRender();
+});
+const endPan = () => { panFrom = null; view.classList.remove('panning'); };
+view.addEventListener('pointerup', endPan);
+view.addEventListener('pointercancel', endPan);
+view.addEventListener('dblclick', (e) => { // close-up where a cell is ~16px, or back to fit
+  if (!viewGeom) return;
+  const fit = viewGeom.scale / zoom;
+  if (zoom > 1.01) { view_.cx = 0.5; view_.cy = 0.5; setZoom(1); } else setZoom(16 / fit, canvasPoint(e));
+});
 new ResizeObserver(requestRender).observe(stage);
 
 function syncAnimation() {
@@ -996,6 +1087,7 @@ function set(k, v) {
   if (typeof SHAPE_DEFAULTS[k] === 'number' && typeof v === 'string') v = +v; // selects hand back strings
   if (k === 'colorTarget') { switchColorTarget(v); return; }
   state[k] = v;
+  if (k === 'calOn') { zoom = 1; view_.cx = 0.5; view_.cy = 0.5; } // a different artboard: start from the whole view
   if (k === 'calOn' && !v && state.colorTarget !== 'month') switchColorTarget('month'); // letter mode edits the month set
   if (k === 'calOn' && v && state.cellPt > 4) { // a whole A4 month needs small cells for the day numbers to read
     state.cellPt = 3;
