@@ -39,6 +39,13 @@
 
   <main class="stage" id="stage">
     <canvas id="view" aria-label="ASCII 글자 미리보기"></canvas>
+    <div class="zoom" id="zoom" role="group" aria-label="미리보기 확대">
+      <button type="button" data-z="out" aria-label="축소">−</button>
+      <button type="button" data-z="fit" title="아트보드 전체 보기 (더블클릭으로도 돌아옵니다)">맞춤</button>
+      <button type="button" data-z="print" title="인쇄 크기로 보기">실제 크기</button>
+      <output id="zoom-o" aria-live="polite"></output>
+      <button type="button" data-z="in" aria-label="확대">+</button>
+    </div>
     <p class="stage-info" id="info"></p>
     <p class="toast" id="toast" role="status" aria-live="polite"></p>
   </main>
@@ -205,6 +212,7 @@
 <script src="editor.js"></script>
 <script src="generator.js"></script>
 <script src="outline.js"></script>
+<script src="calendar.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
