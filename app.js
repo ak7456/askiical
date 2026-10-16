@@ -42,6 +42,8 @@ const SHAPE_DEFAULTS = {
   colorScope: 'all', colorScale: 6, colorAngle: 120, colorSpread: 0.12, colorSeed: 3,
   grid: false, gridColor: '#ffffff', gridAlpha: 0.08, bgUnit: '', bgAlpha: 0.22,
   unitFont: 'JetBrains Mono',
+  // character units: how letters sit in their cell (custom glyphs are centred on the cell by construction)
+  charAlign: 'cap', charScale: 1, charWeight: 0, charDX: 0, charDY: 0,
   // calendar mode: one month on an A4 portrait page
   calOn: false, calYear: new Date().getFullYear(), calMonth: new Date().getMonth() + 1, calLabel: 'full',
   calMonthAlign: 'left', calMonthSize: 0.2, calWeekStart: 'sun', calDayAlign: 'center', calDaySize: 0.55,
@@ -431,14 +433,14 @@ const densityCache = new Map();
 const unitKey = (u) => (u.kind === 'char' ? 'c:' + u.value : 'g:' + u.glyph + ':' + (glyphById(u.glyph) || {}).v);
 
 function measure(u) {
-  const key = u._g ? '' : unitKey(u) + '|' + state.unitFont + '|' + state.cellAspect; // unsaved editor glyphs skip the cache
+  const charKey = u.kind === 'char' ? [state.charAlign, state.charScale, state.charWeight, state.charDX, state.charDY, fontEpoch].join(',') : '';
+  const key = u._g ? '' : unitKey(u) + '|' + state.unitFont + '|' + state.cellAspect + '|' + charKey; // unsaved editor glyphs skip the cache
   if (key && densityCache.has(key)) return densityCache.get(key);
   const cw = 40, ch = Math.round(40 * state.cellAspect);
   dcan.width = cw; dcan.height = ch;
   dctx.clearRect(0, 0, cw, ch);
   dctx.fillStyle = '#000'; dctx.strokeStyle = '#000';
-  dctx.font = unitFontSpec(charPx(cw, ch));
-  dctx.textAlign = 'center'; dctx.textBaseline = 'middle';
+  dctx.__akFont = null; // resizing the canvas reset its font
   drawUnit(dctx, u, cw / 2, ch / 2, cw, ch, 1, 1, 1);
   dctx.setTransform(1, 0, 0, 1, 0, 0);
   const d = dctx.getImageData(0, 0, cw, ch).data;
@@ -452,11 +454,54 @@ function measureGlyph(g) {
   return measure({ kind: 'glyph', glyph: g.id, _g: g });
 }
 
+/* character metrics per 1px of type size, measured at 1000px (canvas metrics are whole pixels) */
+const cmCanvas = document.createElement('canvas').getContext('2d');
+const charMetricCache = new Map();
+function charMetrics(chr) {
+  const key = state.unitFont + '|' + fontEpoch + '|' + chr;
+  let v = charMetricCache.get(key);
+  if (v) return v;
+  const c = cmCanvas;
+  c.font = unitFontSpec(1000);
+  c.textAlign = 'left';
+  c.textBaseline = 'alphabetic';
+  const m = c.measureText(chr), H = c.measureText('H');
+  c.textBaseline = 'middle';
+  const mm = c.measureText(chr);
+  c.textBaseline = 'alphabetic';
+  v = {
+    L: m.actualBoundingBoxLeft / 1000, R: m.actualBoundingBoxRight / 1000,
+    A: m.actualBoundingBoxAscent / 1000, D: m.actualBoundingBoxDescent / 1000,
+    adv: m.width / 1000, cap: H.actualBoundingBoxAscent / 1000,
+    mid: ((m.fontBoundingBoxAscent ?? 0) - (mm.fontBoundingBoxAscent ?? 0)) / 1000, // baseline below the em-box middle
+  };
+  charMetricCache.set(key, v);
+  return v;
+}
+// origin of a character relative to its cell centre, per 1px of type size
+function charOrigin(chr) {
+  const m = charMetrics(chr);
+  if (state.charAlign === 'ink') return [-(m.R - m.L) / 2, (m.A - m.D) / 2]; // each glyph's ink box centred
+  if (state.charAlign === 'em') return [-m.adv / 2, m.mid];                // the font's own em-box middle
+  return [-m.adv / 2, m.cap / 2];                                           // cap height centred: letters sit like glyphs
+}
+
 function drawUnit(ctx, u, x, y, cw, ch, k, px, unitScale) {
   if (u.kind === 'char') {
     if (u.value === ' ') return;
-    ctx.setTransform(px * k, 0, 0, px * k, px * x, px * y);
-    ctx.fillText(u.value, 0, 0);
+    const fs = charPx(cw, ch) * unitScale * state.charScale;
+    const spec = unitFontSpec(fs);
+    if (ctx.__akFont !== spec) { ctx.font = spec; ctx.__akFont = spec; } // setting ctx.font is slow; callers reset __akFont
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
+    const [ox, oy] = charOrigin(u.value);
+    ctx.setTransform(px * k, 0, 0, px * k, px * (x + state.charDX * cw), px * (y + state.charDY * ch));
+    ctx.fillText(u.value, ox * fs, oy * fs);
+    if (state.charWeight > 0) { // thicken by stroking the outline in the same colour
+      ctx.lineWidth = state.charWeight * fs;
+      ctx.lineJoin = 'round';
+      ctx.strokeText(u.value, ox * fs, oy * fs);
+    }
     return;
   }
   const g = u._g || glyphById(u.glyph);
@@ -579,9 +624,7 @@ function paint(ctx, W, H, ops, px, vp) {
     ctx.stroke();
     ctx.globalAlpha = 1;
   }
-  ctx.font = unitFontSpec(charPx(cw, ch) * state.unitScale);
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
+  ctx.__akFont = null;
   let col = null;
   const inset = state.grid ? Math.min(cw, ch) * 0.06 : 0;
   const c0 = vp ? Math.floor(ox / cw) - 1 : -1, c1 = vp ? Math.ceil((ox + vp.w) / cw) + 1 : cols + 1;
@@ -857,7 +900,18 @@ const SECTIONS = [
     { k: 'fps', t: 'range', label: '속도 (fps)', min: 2, max: 30, step: 1, when: (s) => s.animate },
   ] },
 ];
-const ALL_ITEMS = SECTIONS.flatMap((s) => s.items);
+// character-unit settings live in the units panel (right)
+const UNIT_SECTIONS = [
+  { id: 'charunits', title: '문자 유닛 조정', en: 'CHARACTERS', items: [
+    { k: 'charAlign', t: 'seg', label: '세로 맞춤', options: () => opt([['cap', '대문자 기준'], ['ink', '글자마다'], ['em', '서체 기본']]) },
+    { k: 'charScale', t: 'range', label: '크기', min: 0.4, max: 1.8, step: 0.01 },
+    { k: 'charWeight', t: 'range', label: '두께 (획을 바깥으로 굵히기)', min: 0, max: 0.15, step: 0.005 },
+    { k: 'charDX', t: 'range', label: '가로 위치 (셀 너비 대비)', min: -0.5, max: 0.5, step: 0.01 },
+    { k: 'charDY', t: 'range', label: '세로 위치 (셀 높이 대비)', min: -0.5, max: 0.5, step: 0.01 },
+    { id: 'char-note', t: 'note', text: '대문자 기준: 대문자 높이의 가운데를 셀 가운데에 맞춰 커스텀 글리프와 높이가 고르게 맞습니다. 글자마다: 각 글자의 잉크를 셀 가운데에 둡니다(마침표·밑줄도 가운데로). 서체 기본: 예전 방식입니다.' },
+  ] },
+];
+const ALL_ITEMS = [...SECTIONS, ...UNIT_SECTIONS].flatMap((s) => s.items);
 
 function bgUnitOptions() {
   return [['', '없음']].concat(state.units.map((u) => [u.id, u.kind === 'char' ? `문자 “${u.value === ' ' ? '␠' : u.value}”` : `글리프 · ${(glyphById(u.glyph) || {}).name}`]));
@@ -869,13 +923,16 @@ const fmt = (it, v) => {
 };
 
 const SEC_KEY = 'askiical:sections';
-let secOpen = { calendar: true, source: true, color: true, grid: false, output: true, tone: true, map: false };
+let secOpen = { charunits: false, calendar: true, source: true, color: true, grid: false, output: true, tone: true, map: false };
 try { Object.assign(secOpen, JSON.parse(localStorage.getItem(SEC_KEY) || '{}')); } catch (e) { /* defaults */ }
 
 function buildControls() {
-  const host = $('#controls');
+  buildSections($('#controls'), SECTIONS);
+  buildSections($('#unit-controls'), UNIT_SECTIONS);
+}
+function buildSections(host, sections) {
   host.innerHTML = '';
-  for (const sec of SECTIONS) {
+  for (const sec of sections) {
     const el = document.createElement('details');
     el.className = 'ctl-sec';
     el.open = secOpen[sec.id] !== false;
@@ -1083,6 +1140,7 @@ function drawPalBar() {
 
 const LAYOUT_KEYS = new Set(['cols', 'ratio', 'cellAspect']);
 const THEME_KEYS = new Set(['themeOn', 'colorBlend', 'colorScope', 'colorMode', 'bg', 'fg']);
+const CHAR_KEYS = new Set(['charAlign', 'charScale', 'charWeight', 'charDX', 'charDY']);
 function set(k, v) {
   if (typeof SHAPE_DEFAULTS[k] === 'number' && typeof v === 'string') v = +v; // selects hand back strings
   if (k === 'colorTarget') { switchColorTarget(v); return; }
@@ -1100,7 +1158,8 @@ function set(k, v) {
   syncVisibility();
   if (k === 'themeOn' && v) requestAnimationFrame(renderThemeUI); // swatches were hidden, size the bar now
   if (k === 'colorBlend') drawPalBar();
-  if (LAYOUT_KEYS.has(k) || THEME_KEYS.has(k) || k === 'unitFont') renderRamp();
+  if (LAYOUT_KEYS.has(k) || THEME_KEYS.has(k) || CHAR_KEYS.has(k) || k === 'unitFont') renderRamp();
+  if (CHAR_KEYS.has(k)) { clearTimeout(set.chipTimer); set.chipTimer = setTimeout(renderUnits, 150); } // chip ink % follows
   persist();
   requestRender();
 }
@@ -1219,8 +1278,7 @@ function renderRamp() {
   const n = items.length;
   const cw = Math.min(r.width / n, (r.height - 14) / state.cellAspect);
   const ch = cw * state.cellAspect;
-  c.font = unitFontSpec(charPx(cw, ch));
-  c.textAlign = 'center'; c.textBaseline = 'middle';
+  c.__akFont = null;
   const x0 = (r.width - cw * n) / 2;
   const th = themeCtx(items);
   items.forEach((it, i) => {
