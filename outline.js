@@ -248,20 +248,42 @@ const Outline = (() => {
     try { fonts[family] = [opentype.parse(buffer.slice(0))]; return true; } catch (e) { return false; }
   }
 
-  // outline of one character centred like canvas textAlign=center / textBaseline=middle
-  function charD(ch, family, x, y, size) {
+  // outline of one character in its cell, matching the canvas placement (app.js charOrigin):
+  // align 'cap' centres the cap height, 'ink' centres the glyph's ink box, 'em' uses the em-box middle.
+  // weight > 0 adds a round-joined stroke (in units of type size) as a separate filled path.
+  const capHeights = new WeakMap();
+  function capHeight(f) {
+    if (capHeights.has(f)) return capHeights.get(f);
+    let cap = f.tables.os2 && f.tables.os2.sCapHeight;
+    if (!cap) { const H = f.glyphs.get(f.charToGlyphIndex('H')); cap = H ? H.getBoundingBox().y2 : f.ascender * 0.7; }
+    capHeights.set(f, cap);
+    return cap;
+  }
+  function charD(ch, family, x, y, size, opt = {}) {
     const chain = [...(fonts[family] || []), ...(fonts['JetBrains Mono'] || []), ...(fonts['IBM Plex Mono'] || [])];
     for (const f of chain) {
       const gi = f.charToGlyphIndex(ch);
       if (!gi) continue;
       const glyph = f.glyphs.get(gi);
       const k = size / f.unitsPerEm;
-      // canvas textBaseline "middle" is the middle of the em box, with the font's ascent:descent ratio scaled to 1em
-      const hh = f.tables.hhea || f;
-      const asc = hh.ascender, desc = -hh.descender;
-      const baseline = y + ((asc - desc) / (asc + desc) / 2) * size;
-      const path = glyph.getPath(x - (glyph.advanceWidth * k) / 2, baseline, size);
-      return path.toPathData(2);
+      let ox, baseline;
+      if (opt.align === 'ink') {
+        const bb = glyph.getBoundingBox();
+        ox = x - ((bb.x1 + bb.x2) / 2) * k;
+        baseline = y + ((bb.y1 + bb.y2) / 2) * k;
+      } else if (opt.align === 'em') {
+        // canvas textBaseline "middle" is the middle of the em box, with the font's ascent:descent ratio scaled to 1em
+        const hh = f.tables.hhea || f;
+        const asc = hh.ascender, desc = -hh.descender;
+        ox = x - (glyph.advanceWidth * k) / 2;
+        baseline = y + ((asc - desc) / (asc + desc) / 2) * size;
+      } else {
+        ox = x - (glyph.advanceWidth * k) / 2;
+        baseline = y + (capHeight(f) * k) / 2;
+      }
+      const fill = glyph.getPath(ox, baseline, size).toPathData(2);
+      const stroke = opt.weight > 0 ? strokeD(polylines(parse(fill), [1, 0, 0, 1, 0, 0], 0.05), (opt.weight * size) / 2) : '';
+      return { fill, stroke };
     }
     return null;
   }
@@ -272,7 +294,7 @@ const Outline = (() => {
     const { state, ops, glyphById } = ctx;
     const { cols, rows } = ctx.dims;
     const W = ctx.W, H = ctx.H, cw = W / cols, ch = H / rows;
-    const fpx = ctx.charPx(cw, ch) * state.unitScale;
+    const fpx = ctx.charPx(cw, ch) * state.unitScale * (state.charScale || 1);
     const tol = 0.05;
     const inset = state.grid ? Math.min(cw, ch) * 0.06 : 0;
     const boxes = new Map(), ink = new Map(), faint = new Map(), missing = new Set();
@@ -285,8 +307,9 @@ const Outline = (() => {
       const target = op.a < 1 ? faint : ink;
       if (op.u.kind === 'char') {
         if (op.u.value === ' ' || !op.u.value.trim()) continue;
-        const d = charD(op.u.value, state.unitFont, x, y, fpx * op.k);
-        if (d) add(target, op.col, `<path d="${d}"/>`);
+        const d = charD(op.u.value, state.unitFont, x + (state.charDX || 0) * cw, y + (state.charDY || 0) * ch, fpx * op.k,
+          { align: state.charAlign || 'cap', weight: state.charWeight || 0 });
+        if (d) add(target, op.col, d.stroke ? `<g><path d="${d.fill}"/><path d="${d.stroke}"/></g>` : `<path d="${d.fill}"/>`);
         else {
           missing.add(op.u.value);
           add(target, op.col, `<text x="${R(x)}" y="${R(y + fpx * op.k * 0.35)}" font-size="${R(fpx * op.k)}" text-anchor="middle" font-family="${AK.esc(state.unitFont)}">${AK.esc(op.u.value)}</text>`);

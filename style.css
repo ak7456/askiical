@@ -301,6 +301,9 @@ details[open].ctl-sec > summary h3 span::before { transform: rotate(45deg); marg
 }
 .chip:hover .chip-x, .chip:focus-within .chip-x { opacity: 1; }
 .add-chars { display: flex; gap: 6px; }
+.unit-controls details.ctl-sec { border: 1px solid var(--line); border-radius: var(--radius); }
+.unit-controls details.ctl-sec > summary { padding: 9px 12px; }
+.unit-controls .ctl-body { padding: 2px 12px 14px; }
 .charsets { display: flex; flex-wrap: wrap; gap: 4px; }
 .charsets button { min-height: 24px; font-size: 11px; padding: 2px 8px; color: var(--mute); }
 .charsets button:hover { color: var(--text); }
