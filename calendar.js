@@ -1,12 +1,27 @@
 'use strict';
-/* calendar.js — one month on one A4 portrait page, laid out on the shared cell grid.
+/* calendar.js — one month on one page (A4 / A3 / B4 / B3, portrait or landscape), laid out on the shared cell grid.
    The page is a block layout: a month name band on top and a 7-column day grid below.
    Every block carries a style: 'month' (month name and special days) or 'day' (other day numbers);
    app.js rasterises each style separately so the two can take different colour themes.
    Lengths are in cell widths: a cell is 1 wide and cellAspect tall, the page is cols × rows·cellAspect. */
 
 const Calendar = (() => {
-  const A4 = { w: 595.28, h: 841.89 }; // pt, portrait
+  // paper sizes in mm (portrait). B sizes come in two standards: JIS (common in Korean/Japanese print shops) and ISO.
+  const PAPERS = [
+    { id: 'A4', label: 'A4 · 210×297mm', w: 210, h: 297 },
+    { id: 'A3', label: 'A3 · 297×420mm', w: 297, h: 420 },
+    { id: 'B4', label: 'B4 (JIS) · 257×364mm', w: 257, h: 364 },
+    { id: 'B3', label: 'B3 (JIS) · 364×515mm', w: 364, h: 515 },
+    { id: 'B4iso', label: 'B4 (ISO) · 250×353mm', w: 250, h: 353 },
+    { id: 'B3iso', label: 'B3 (ISO) · 353×500mm', w: 353, h: 500 },
+  ];
+  const MM_PT = 72 / 25.4;
+  // page size in pt for the paper and orientation
+  function paper(id, orient) {
+    const p = PAPERS.find((x) => x.id === id) || PAPERS[0];
+    const w = p.w * MM_PT, h = p.h * MM_PT;
+    return orient === 'landscape' ? { w: h, h: w, paper: p } : { w, h, paper: p };
+  }
   const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
   const LABELS = [
@@ -24,11 +39,12 @@ const Calendar = (() => {
     }
   }
 
-  // page grid for the cell size: as close to A4 as whole cells allow
-  function grid(cellPt, cellAspect) {
+  // page grid for the cell size: as close to the paper as whole cells allow
+  function grid(s) {
+    const pg = paper(s.calPaper, s.calOrient);
     return {
-      cols: Math.max(20, Math.round(A4.w / cellPt)),
-      rows: Math.max(20, Math.round(A4.h / (cellPt * cellAspect))),
+      cols: Math.max(20, Math.round(pg.w / s.cellPt)),
+      rows: Math.max(20, Math.round(pg.h / (s.cellPt * s.cellAspect))),
     };
   }
 
@@ -48,7 +64,7 @@ const Calendar = (() => {
      x / y: text origin and baseline in cell widths; size: type size in cell widths.
      measure(text) → { asc, desc, left, right, width } per 1 unit of type size, plus box: { asc, desc } for the font. */
   function layout(s, measure) {
-    const { cols, rows } = grid(s.cellPt, s.cellAspect);
+    const { cols, rows } = grid(s);
     const W = cols, H = rows * s.cellAspect;
     const mg = s.calMargin;
     const contentW = W - 2 * mg, contentH = H - 2 * mg;
@@ -149,5 +165,5 @@ const Calendar = (() => {
     return new Blob([...local, ...central, new Uint8Array(end.buffer)], { type: 'application/zip' });
   }
 
-  return { A4, MONTHS, LABELS, monthLabel, grid, parseDays, layout, zip };
+  return { PAPERS, paper, MONTHS, LABELS, monthLabel, grid, parseDays, layout, zip };
 })();

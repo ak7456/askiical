@@ -45,7 +45,7 @@ const SHAPE_DEFAULTS = {
   // character units: how letters sit in their cell (custom glyphs are centred on the cell by construction)
   charAlign: 'cap', charScale: 1, charWeight: 0, charDX: 0, charDY: 0,
   // calendar mode: one month on an A4 portrait page
-  calOn: false, calYear: new Date().getFullYear(), calMonth: new Date().getMonth() + 1, calLabel: 'full',
+  calOn: false, calPaper: 'A4', calOrient: 'portrait', calYear: new Date().getFullYear(), calMonth: new Date().getMonth() + 1, calLabel: 'full',
   calMonthAlign: 'left', calMonthSize: 0.2, calWeekStart: 'sun', calDayAlign: 'center', calDaySize: 0.55,
   calMargin: 6, calGap: 2, calSixWeeks: false, calSun: true, calSat: false, calSpecial: {},
   colorTarget: 'month', altColors: null,
@@ -213,7 +213,7 @@ function letterLayout() {
   return v;
 }
 function dims() {
-  if (state.calOn) return Calendar.grid(state.cellPt, state.cellAspect);
+  if (state.calOn) return Calendar.grid(state);
   const l = letterLayout();
   return { cols: l.cols, rows: l.rows };
 }
@@ -282,7 +282,7 @@ function calMeasure() {
 let calCache = { key: '', v: null };
 function calLayout() {
   const key = ['calYear', 'calMonth', 'calLabel', 'calMonthAlign', 'calMonthSize', 'calWeekStart', 'calDayAlign', 'calDaySize',
-    'calMargin', 'calGap', 'calSixWeeks', 'calSun', 'calSat', 'font', 'weight', 'italic', 'cellPt', 'cellAspect'].map((k) => state[k]).join('|') +
+    'calPaper', 'calOrient', 'calMargin', 'calGap', 'calSixWeeks', 'calSun', 'calSat', 'font', 'weight', 'italic', 'cellPt', 'cellAspect'].map((k) => state[k]).join('|') +
     '|' + JSON.stringify(state.calSpecial) + '|' + fontEpoch;
   if (calCache.key !== key) calCache = { key, v: Calendar.layout(state, calMeasure()) };
   return calCache.v;
@@ -675,7 +675,9 @@ function renderOutputInfo() {
   const el = document.getElementById('out-info');
   if (!el) return;
   const o = outputSize();
-  el.innerHTML = `${o.cols} × ${o.rows} 셀 · <b>${fmtNum(o.Wpt, 2)} × ${fmtNum(o.Hpt, 2)} pt</b><br>` +
+  const pg = state.calOn ? Calendar.paper(state.calPaper, state.calOrient) : null;
+  el.innerHTML = (pg ? `용지 ${pg.paper.id.replace('iso', ' ISO')} ${state.calOrient === 'landscape' ? '가로' : '세로'} (${fmtNum(pg.w * PT_MM)} × ${fmtNum(pg.h * PT_MM)} mm)에 맞춘 격자<br>` : '') +
+    `${o.cols} × ${o.rows} 셀 · <b>${fmtNum(o.Wpt, 2)} × ${fmtNum(o.Hpt, 2)} pt</b><br>` +
     `${fmtNum(o.Wpt * PT_MM)} × ${fmtNum(o.Hpt * PT_MM)} mm · PNG ${o.pxW.toLocaleString()} × ${o.pxH.toLocaleString()} px @ ${o.dpi} dpi` +
     (o.clamped ? `<br>PNG가 너무 커서 ${o.dpi} dpi로 낮춰 저장합니다.` : '') +
     (!state.calOn && letterLayout().sizeRows ? `<br>글자 크기 ${state.letterScale}에 맞춰 세로 셀을 ${state.rowsFont}행에서 ${state.rowsFont + letterLayout().sizeRows}행으로 늘렸습니다.` : '') +
@@ -806,7 +808,9 @@ const themed = (s) => s.themeOn;
 const cal = (s) => s.calOn;
 const SECTIONS = [
   { id: 'calendar', title: '달력', en: 'CALENDAR', items: [
-    { k: 'calOn', t: 'check', label: '달력 모드 · A4 세로에 한 달' },
+    { k: 'calOn', t: 'check', label: '달력 모드 · 한 장에 한 달' },
+    { k: 'calPaper', t: 'select', label: '용지', when: cal, options: () => Calendar.PAPERS.map((p) => [p.id, p.label]) },
+    { k: 'calOrient', t: 'seg', label: '방향', when: cal, options: () => opt([['portrait', '세로'], ['landscape', '가로']]) },
     { k: 'calYear', t: 'number', label: '연도', min: 1900, max: 2100, step: 1, when: cal },
     { k: 'calMonth', t: 'select', label: '월', when: cal, options: () => Calendar.MONTHS.map((n, i) => [String(i + 1), `${i + 1}월 · ${n}`]) },
     { id: 'cal-nav', t: 'buttons', when: cal, buttons: () => [['‹ 이전 달', () => stepMonth(-1)], ['다음 달 ›', () => stepMonth(1)]] },
@@ -1483,7 +1487,8 @@ function download(name, blob) {
   a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 }
-const baseName = () => state.calOn ? `askiical-${calKey()}` : 'askiical-' + (state.char || 'glyph').replace(/[^\p{L}\p{N}]/gu, '') + '-' + dims().cols + 'x' + dims().rows;
+const paperTag = () => `${state.calPaper}${state.calOrient === 'landscape' ? '-land' : ''}`;
+const baseName = () => state.calOn ? `askiical-${calKey()}-${paperTag()}` : 'askiical-' + (state.char || 'glyph').replace(/[^\p{L}\p{N}]/gu, '') + '-' + dims().cols + 'x' + dims().rows;
 
 // PNG pHYs chunk so Illustrator / Photoshop place the image at its physical size
 const CRC_TABLE = (() => {
@@ -1540,7 +1545,7 @@ async function exportYear(kind) {
       state.calMonth = m;
       const o = outputSize();
       const ops = buildOps(0);
-      const name = `askiical-${year}-${String(m).padStart(2, '0')}`;
+      const name = `askiical-${year}-${String(m).padStart(2, '0')}-${paperTag()}`;
       if (kind === 'svg') {
         const res = Outline.build({ state, dims: dims(), ops, glyphById, charPx, W: o.Wpt, H: o.Hpt, unit: 'pt' });
         files.push({ name: name + '.svg', data: enc.encode(res.svg) });
@@ -1554,7 +1559,7 @@ async function exportYear(kind) {
       }
     }
     toast('ZIP으로 묶는 중입니다…');
-    download(`askiical-${year}-calendar-${kind}.zip`, await Calendar.zip(files));
+    download(`askiical-${year}-calendar-${paperTag()}-${kind}.zip`, await Calendar.zip(files));
     toast(`${year}년 12달을 ${kind.toUpperCase()}로 묶어 저장했습니다.`);
   } catch (err) {
     toast('12달 내보내기에 실패했습니다: ' + err.message);
