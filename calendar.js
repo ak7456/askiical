@@ -111,11 +111,16 @@ const Calendar = (() => {
       const isSpecial = special.has(d) || (s.calSun && col === sunCol) || (s.calSat && col === satCol);
       blocks.push({ text: t, x, y: base, size: fd, style: isSpecial ? 'month' : 'day' });
     }
-    // horizontal rule above each week row; t = thickness in cell widths (one cell width = cellPt pt)
+    // horizontal rule above each week row, spanning only the columns that hold a day;
+    // t = thickness in cell widths (one cell width = cellPt pt)
     const lines = [];
     if (s.calLines) {
       const t = (s.calLineW || 1) / s.cellPt;
-      for (let wk = 0; wk < weeks; wk++) lines.push({ x0: mg, x1: W - mg, y: top + wk * cellH + (s.calLineDY || 0) * s.cellAspect, t });
+      for (let wk = 0; wk < weeks; wk++) {
+        const first = Math.max(offset, wk * 7), last = Math.min(offset + days - 1, wk * 7 + 6);
+        if (first > last) continue; // empty sixth week
+        lines.push({ x0: mg + (first % 7) * cellW, x1: mg + ((last % 7) + 1) * cellW, y: top + wk * cellH + (s.calLineDY || 0) * s.cellAspect, t });
+      }
     }
     return { cols, rows, blocks, lines, weeks, days };
   }
