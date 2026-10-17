@@ -45,7 +45,8 @@ const SHAPE_DEFAULTS = {
   // character units: how letters sit in their cell (custom glyphs are centred on the cell by construction)
   charAlign: 'cap', charScale: 1, charWeight: 0, charDX: 0, charDY: 0,
   // calendar mode: one month on an A4 portrait page
-  calOn: false, calPaper: 'A4', calOrient: 'portrait', calYear: new Date().getFullYear(), calMonth: new Date().getMonth() + 1, calLabel: 'full',
+  calOn: false, calPaper: 'A4', calOrient: 'portrait', calMonthDY: 0, calGridDY: 0,
+  calLines: false, calLineMode: 'units', calLineW: 1, calLineDY: 0, calLineColor: '#ecebe4', calYear: new Date().getFullYear(), calMonth: new Date().getMonth() + 1, calLabel: 'full',
   calMonthAlign: 'left', calMonthSize: 0.2, calWeekStart: 'sun', calDayAlign: 'center', calDaySize: 0.55,
   calMargin: 6, calGap: 2, calSixWeeks: false, calSun: true, calSat: false, calSpecial: {},
   colorTarget: 'month', altColors: null,
@@ -147,6 +148,7 @@ function applyProject(p, quiet) {
   const sp = s.calSpecial && typeof s.calSpecial === 'object' ? s.calSpecial : {};
   s.calSpecial = Object.fromEntries(Object.entries(sp).filter(([k, v]) => /^\d{4}-\d{2}$/.test(k) && typeof v === 'string'));
   if (s.calMonth < 1 || s.calMonth > 12) s.calMonth = SHAPE_DEFAULTS.calMonth;
+  if (!Calendar.PAPERS.some((pp) => pp.id === s.calPaper)) s.calPaper = 'A4';
   if (!['month', 'day'].includes(s.colorTarget)) s.colorTarget = 'month';
   state = s;
   if (!quiet) afterStructuralChange();
@@ -282,7 +284,7 @@ function calMeasure() {
 let calCache = { key: '', v: null };
 function calLayout() {
   const key = ['calYear', 'calMonth', 'calLabel', 'calMonthAlign', 'calMonthSize', 'calWeekStart', 'calDayAlign', 'calDaySize',
-    'calPaper', 'calOrient', 'calMargin', 'calGap', 'calSixWeeks', 'calSun', 'calSat', 'font', 'weight', 'italic', 'cellPt', 'cellAspect'].map((k) => state[k]).join('|') +
+    'calPaper', 'calOrient', 'calMonthDY', 'calGridDY', 'calLines', 'calLineW', 'calLineDY', 'calMargin', 'calGap', 'calSixWeeks', 'calSun', 'calSat', 'font', 'weight', 'italic', 'cellPt', 'cellAspect'].map((k) => state[k]).join('|') +
     '|' + JSON.stringify(state.calSpecial) + '|' + fontEpoch;
   if (calCache.key !== key) calCache = { key, v: Calendar.layout(state, calMeasure()) };
   return calCache.v;
@@ -293,7 +295,7 @@ let styleMap = null;
 function rasterCalendar() {
   const lay = calLayout();
   const { cols, rows } = lay;
-  const key = 'cal|' + calCache.key;
+  const key = 'cal|' + calCache.key + '|' + state.calLineMode;
   if (key === rasterKey && coverage) return coverage;
   ensureFont(letterFontSpec(100), lay.blocks.map((b) => b.text).join(''));
   const W = cols * SS, H = Math.max(rows, Math.round(rows * state.cellAspect * SS));
@@ -306,6 +308,9 @@ function rasterCalendar() {
       if (b.style !== style) continue;
       rctx.font = letterFontSpec(b.size * SS);
       rctx.fillText(b.text, b.x * SS, b.y * sy);
+    }
+    if (style === 'day' && state.calLineMode === 'units') { // rules drawn into the letter field, so units fill them
+      for (const l of lay.lines) rctx.fillRect(l.x0 * SS, (l.y - l.t / 2) * sy, (l.x1 - l.x0) * SS, l.t * sy);
     }
     return cellCoverage(W, H, cols, rows);
   };
@@ -602,6 +607,9 @@ function buildOps(frame) {
 }
 
 /* ---------- 4. paint */
+// calendar rules drawn as solid lines (in cell widths), or none
+const vectorRules = () => (state.calOn && state.calLines && state.calLineMode === 'vector' ? calLayout().lines : []);
+
 // W × H: artboard size in CSS px; px: device pixel ratio.
 // vp (optional, zoomed preview): the visible window { x, y, w, h } of the artboard; only cells inside it are drawn.
 function paint(ctx, W, H, ops, px, vp) {
@@ -641,6 +649,13 @@ function paint(ctx, W, H, ops, px, vp) {
     if (op.col !== col) { col = op.col; ctx.fillStyle = col; ctx.strokeStyle = col; }
     ctx.globalAlpha = op.a;
     drawUnit(ctx, op.u, (op.c + 0.5) * cw - ox, (op.r + 0.5) * ch - oy, cw, ch, op.k, px, state.unitScale);
+  }
+  const rules = vectorRules();
+  if (rules.length) { // calendar rules as solid lines over the units
+    base();
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = state.calLineColor;
+    for (const l of rules) ctx.fillRect(l.x0 * cw, (l.y - l.t / 2) * cw, (l.x1 - l.x0) * cw, l.t * cw);
   }
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.globalAlpha = 1;
@@ -822,6 +837,15 @@ const SECTIONS = [
     { k: 'calDaySize', t: 'range', label: '날짜 크기 (칸 높이 대비)', min: 0.2, max: 1, step: 0.01, when: cal },
     { k: 'calMargin', t: 'range', label: '바깥 여백 (셀)', min: 0, max: 30, step: 1, when: cal },
     { k: 'calGap', t: 'range', label: '달 이름과 날짜 사이 (행)', min: 0, max: 30, step: 1, when: cal },
+    { k: 'calMonthDY', t: 'range', label: '달 이름 세로 위치 (행)', min: -60, max: 60, step: 0.5, when: cal },
+    { k: 'calGridDY', t: 'range', label: '날짜 표 세로 위치 (행)', min: -60, max: 60, step: 0.5, when: cal },
+    { k: 'calLines', t: 'check', label: '각 주 위에 가로선', when: cal },
+    { k: 'calLineMode', t: 'seg', label: '선 표현', when: (s) => cal(s) && s.calLines, options: () => opt([['units', '유닛으로 채움'], ['vector', '실선']]) },
+    { k: 'calLineW', t: 'range', label: '선 두께', min: 0.25, max: 24, step: 0.25, unit: ' pt', when: (s) => cal(s) && s.calLines },
+    { k: 'calLineDY', t: 'range', label: '선 세로 위치 (행)', min: -20, max: 20, step: 0.25, when: (s) => cal(s) && s.calLines },
+    { k: 'calLineColor', t: 'color', label: '선 색', when: (s) => cal(s) && s.calLines && s.calLineMode === 'vector' },
+    { id: 'cal-line-note', t: 'note', when: (s) => cal(s) && s.calLines && s.calLineMode === 'units',
+      text: '유닛으로 채움: 선도 날짜 색 테마의 유닛으로 그립니다. 셀 높이보다 가늘면 유닛이 흐리게 나오니, 두께를 셀 높이(셀 너비 × 셀 세로 비) 이상으로 두세요.' },
     { k: 'calSixWeeks', t: 'check', label: '항상 6주 칸으로 나누기', when: cal },
     { k: 'calSun', t: 'check', label: '일요일을 특별한 날로', when: cal },
     { k: 'calSat', t: 'check', label: '토요일을 특별한 날로', when: cal },
@@ -1547,7 +1571,7 @@ async function exportYear(kind) {
       const ops = buildOps(0);
       const name = `askiical-${year}-${String(m).padStart(2, '0')}-${paperTag()}`;
       if (kind === 'svg') {
-        const res = Outline.build({ state, dims: dims(), ops, glyphById, charPx, W: o.Wpt, H: o.Hpt, unit: 'pt' });
+        const res = Outline.build({ state, dims: dims(), ops, glyphById, charPx, W: o.Wpt, H: o.Hpt, unit: 'pt', rules: vectorRules() });
         files.push({ name: name + '.svg', data: enc.encode(res.svg) });
       } else {
         const cv = document.createElement('canvas');
@@ -1578,7 +1602,7 @@ $('#ex-svg').onclick = async () => {
     await Outline.ensureFonts();
     for (const [fam, buf] of Object.entries(userFonts)) Outline.addFont(fam, buf);
     const o = outputSize();
-    const res = Outline.build({ state, dims: dims(), ops: buildOps(frame), glyphById, charPx, W: o.Wpt, H: o.Hpt, unit: 'pt' });
+    const res = Outline.build({ state, dims: dims(), ops: buildOps(frame), glyphById, charPx, W: o.Wpt, H: o.Hpt, unit: 'pt', rules: vectorRules() });
     download(baseName() + '-outline.svg', new Blob([res.svg], { type: 'image/svg+xml' }));
     toast(res.missing.length
       ? `아웃라인 SVG로 저장했습니다. 서체에 없는 문자 ${res.missing.join(' ')} 는 텍스트로 남았습니다.`

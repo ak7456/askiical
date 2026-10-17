@@ -187,6 +187,86 @@ const Outline = (() => {
     return s;
   }
 
+  /* stroke → filled outline that keeps curves.
+     Lines become capsules; cubics are split into pieces turning at most ~15° and each piece becomes a
+     "sausage": the curve offset by ±r on both sides (offset cubics) joined by round end caps. All shapes are
+     wound the same way, so the nonzero rule merges them into one round-capped, round-joined stroke.
+     Where the stroke is wider than the curve is tight (inner offset would fold), that piece falls back to
+     finely flattened capsules. */
+  function strokeCurveD(segs, m, r, tol) {
+    const rr = R(r);
+    const P = (p) => `${R(p[0])} ${R(p[1])}`;
+    const dot = (p) => `M${R(p[0] - r)} ${R(p[1])}A${rr} ${rr} 0 1 0 ${R(p[0] + r)} ${R(p[1])}A${rr} ${rr} 0 1 0 ${R(p[0] - r)} ${R(p[1])}Z`;
+    const capsule = (p, q) => {
+      const dx = q[0] - p[0], dy = q[1] - p[1], len = Math.hypot(dx, dy);
+      if (len < 1e-6) return dot(p);
+      const nx = (-dy / len) * r, ny = (dx / len) * r;
+      return `M${R(p[0] + nx)} ${R(p[1] + ny)}L${R(q[0] + nx)} ${R(q[1] + ny)}A${rr} ${rr} 0 0 0 ${R(q[0] - nx)} ${R(q[1] - ny)}` +
+        `L${R(p[0] - nx)} ${R(p[1] - ny)}A${rr} ${rr} 0 0 0 ${R(p[0] + nx)} ${R(p[1] + ny)}Z`;
+    };
+    const dir = (a, b) => { const dx = b[0] - a[0], dy = b[1] - a[1], l = Math.hypot(dx, dy); return l < 1e-9 ? null : [dx / l, dy / l]; };
+    const bez = (c, t) => { const u = 1 - t; return [
+      u * u * u * c[0][0] + 3 * u * u * t * c[1][0] + 3 * u * t * t * c[2][0] + t * t * t * c[3][0],
+      u * u * u * c[0][1] + 3 * u * u * t * c[1][1] + 3 * u * t * t * c[2][1] + t * t * t * c[3][1]]; };
+    const d1 = (c, t) => { const u = 1 - t; return [
+      3 * u * u * (c[1][0] - c[0][0]) + 6 * u * t * (c[2][0] - c[1][0]) + 3 * t * t * (c[3][0] - c[2][0]),
+      3 * u * u * (c[1][1] - c[0][1]) + 6 * u * t * (c[2][1] - c[1][1]) + 3 * t * t * (c[3][1] - c[2][1])]; };
+    const d2 = (c, t) => [
+      6 * (1 - t) * (c[2][0] - 2 * c[1][0] + c[0][0]) + 6 * t * (c[3][0] - 2 * c[2][0] + c[1][0]),
+      6 * (1 - t) * (c[2][1] - 2 * c[1][1] + c[0][1]) + 6 * t * (c[3][1] - 2 * c[2][1] + c[1][1])];
+    // sub-curve of c between t0 and t1 (de Casteljau)
+    const split = (c, t) => {
+      const l = (a, b) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+      const a = l(c[0], c[1]), b = l(c[1], c[2]), e = l(c[2], c[3]), f = l(a, b), g = l(b, e), h = l(f, g);
+      return [[c[0], a, f, h], [h, g, e, c[3]]];
+    };
+    const sub = (c, t0, t1) => { const right = t0 > 0 ? split(c, t0)[1] : c; return t1 < 1 ? split(right, (t1 - t0) / (1 - t0))[0] : right; };
+    const sausage = (c) => {
+      const t0 = dir(c[0], c[1]) || dir(c[0], c[2]) || dir(c[0], c[3]);
+      const t3 = dir(c[2], c[3]) || dir(c[1], c[3]) || dir(c[0], c[3]);
+      if (!t0 || !t3) return dot(c[0]);
+      const n0 = [-t0[1] * r, t0[0] * r], n3 = [-t3[1] * r, t3[0] * r];
+      const off = (p, n, k) => [p[0] + n[0] * k, p[1] + n[1] * k];
+      return `M${P(off(c[0], n0, 1))}C${P(off(c[1], n0, 1))} ${P(off(c[2], n3, 1))} ${P(off(c[3], n3, 1))}` +
+        `A${rr} ${rr} 0 0 0 ${P(off(c[3], n3, -1))}C${P(off(c[2], n3, -1))} ${P(off(c[1], n0, -1))} ${P(off(c[0], n0, -1))}` +
+        `A${rr} ${rr} 0 0 0 ${P(off(c[0], n0, 1))}Z`;
+    };
+    const cubic = (c) => {
+      // how much the tangent turns, sampled
+      let turn = 0, prev = null, tight = false;
+      for (let i = 0; i <= 12; i++) {
+        const t = i / 12, v = d1(c, t), a = Math.atan2(v[1], v[0]), sp = Math.hypot(v[0], v[1]);
+        if (prev !== null) { let da = Math.abs(a - prev); if (da > Math.PI) da = 2 * Math.PI - da; turn += da; }
+        prev = a;
+        const w = d2(c, t), cross = Math.abs(v[0] * w[1] - v[1] * w[0]);
+        if (sp > 1e-9 && cross > 1e-12 && (sp * sp * sp) / cross < r * 1.15) tight = true; // radius of curvature < stroke radius
+      }
+      if (tight) { // fold-prone: fine capsules along the curve
+        const n = Math.min(96, Math.max(8, Math.ceil(turn / (Math.PI / 36))));
+        let out = '', p = c[0];
+        for (let i = 1; i <= n; i++) { const q = bez(c, i / n); out += capsule(p, q); p = q; }
+        return out;
+      }
+      const n = Math.min(24, Math.max(1, Math.ceil(turn / (Math.PI / 12))));
+      let out = '';
+      for (let i = 0; i < n; i++) out += sausage(sub(c, i / n, (i + 1) / n));
+      return out;
+    };
+    let s = '', cur = null, start = null;
+    for (const g of segs) {
+      if (g.t === 'M') { cur = start = ap(m, g.x, g.y); }
+      else if (g.t === 'L') { const q = ap(m, g.x, g.y); s += capsule(cur || q, q); cur = q; }
+      else if (g.t === 'C') {
+        const c = [cur || ap(m, g.c[4], g.c[5]), ap(m, g.c[0], g.c[1]), ap(m, g.c[2], g.c[3]), ap(m, g.c[4], g.c[5])];
+        s += cubic(c); cur = c[3];
+      } else if (g.t === 'Z') {
+        if (cur && start && Math.hypot(cur[0] - start[0], cur[1] - start[1]) > 1e-6) s += capsule(cur, start);
+        cur = start;
+      }
+    }
+    return s;
+  }
+
   /* ---------- custom glyph → list of { d, rule } in artboard space */
   const glyphCache = new Map(); // glyph id → { v, shapes: parsed }
   function parsedGlyph(g) {
@@ -209,7 +289,7 @@ const Outline = (() => {
     let strokes = '';
     for (const s of p.shapes) {
       const m = s.m ? mul(place, s.m) : place;
-      if (s.mode === 'stroke') strokes += strokeD(polylines(s.segs, m, tol), ((s.sw || 6) / 2) * scale);
+      if (s.mode === 'stroke') strokes += strokeCurveD(s.segs, m, ((s.sw || 6) / 2) * scale, tol);
       else if (s.rule) extra.push({ d: fillD(s.segs, m), rule: s.rule });
       else main += fillD(s.segs, m);
     }
@@ -282,7 +362,7 @@ const Outline = (() => {
         baseline = y + (capHeight(f) * k) / 2;
       }
       const fill = glyph.getPath(ox, baseline, size).toPathData(2);
-      const stroke = opt.weight > 0 ? strokeD(polylines(parse(fill), [1, 0, 0, 1, 0, 0], 0.05), (opt.weight * size) / 2) : '';
+      const stroke = opt.weight > 0 ? strokeCurveD(parse(fill), [1, 0, 0, 1, 0, 0], (opt.weight * size) / 2, 0.05) : '';
       return { fill, stroke };
     }
     return null;
@@ -334,6 +414,9 @@ const Outline = (() => {
       for (let r = 0; r <= rows; r++) grid += `<rect x="0" y="${R(r * ch - lw / 2)}" width="${R(W)}" height="${R(lw)}"/>`;
       grid = `<g id="grid" fill="${state.gridColor}" opacity="${state.gridAlpha}">${grid}</g>`;
     }
+    // calendar rules drawn as solid lines (cell-width units → artboard units)
+    const rules = (ctx.rules || []).length ? `<g id="calendar-rules" fill="${state.calLineColor}">${ctx.rules.map((l) =>
+      `<rect x="${R(l.x0 * cw)}" y="${R((l.y - l.t / 2) * cw)}" width="${R((l.x1 - l.x0) * cw)}" height="${R(l.t * cw)}"/>`).join('')}</g>` : '';
     const svg = `<?xml version="1.0" encoding="UTF-8"?>\n` +
       `<svg xmlns="http://www.w3.org/2000/svg" version="1.1" viewBox="0 0 ${R(W)} ${R(H)}" width="${R(W)}${ctx.unit || 'px'}" height="${R(H)}${ctx.unit || 'px'}">` +
       `<g id="background"><rect x="0" y="0" width="${R(W)}" height="${R(H)}" fill="${state.bg}"/></g>` +
@@ -341,9 +424,10 @@ const Outline = (() => {
       layer('cells', boxes) +
       layer('background-units', faint, ` opacity="${state.bgAlpha}"`) +
       layer('units', ink) +
+      rules +
       `</svg>`;
     return { svg, count, missing: [...missing], colors: new Set([...ink.keys(), ...boxes.keys()]).size };
   }
 
-  return { ensureFonts, addFont, build, charD, parse, fillD, polylines, strokeD };
+  return { ensureFonts, addFont, build, charD, parse, fillD, polylines, strokeD, strokeCurveD };
 })();

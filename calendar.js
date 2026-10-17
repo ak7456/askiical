@@ -6,14 +6,12 @@
    Lengths are in cell widths: a cell is 1 wide and cellAspect tall, the page is cols × rows·cellAspect. */
 
 const Calendar = (() => {
-  // paper sizes in mm (portrait). B sizes come in two standards: JIS (common in Korean/Japanese print shops) and ISO.
+  // paper sizes in mm (portrait), as used by the print shop
   const PAPERS = [
     { id: 'A4', label: 'A4 · 210×297mm', w: 210, h: 297 },
     { id: 'A3', label: 'A3 · 297×420mm', w: 297, h: 420 },
-    { id: 'B4', label: 'B4 (JIS) · 257×364mm', w: 257, h: 364 },
-    { id: 'B3', label: 'B3 (JIS) · 364×515mm', w: 364, h: 515 },
-    { id: 'B4iso', label: 'B4 (ISO) · 250×353mm', w: 250, h: 353 },
-    { id: 'B3iso', label: 'B3 (ISO) · 353×500mm', w: 353, h: 500 },
+    { id: 'B4', label: 'B4 · 257×364mm', w: 257, h: 364 },
+    { id: 'B3', label: 'B3 · 364×504mm', w: 364, h: 504 },
   ];
   const MM_PT = 72 / 25.4;
   // page size in pt for the paper and orientation
@@ -78,7 +76,7 @@ const Calendar = (() => {
     let fm = bandH / (box.asc + box.desc);
     const inkW = lm.right + lm.left;
     if (inkW * fm > contentW) fm = contentW / inkW;
-    const mBase = mg + (bandH - (box.asc + box.desc) * fm) / 2 + box.asc * fm;
+    const mBase = mg + (bandH - (box.asc + box.desc) * fm) / 2 + box.asc * fm + (s.calMonthDY || 0) * s.cellAspect;
     const mx = s.calMonthAlign === 'center' ? W / 2 - ((lm.right - lm.left) / 2) * fm : mg + lm.left * fm;
     blocks.push({ text: label, x: mx, y: mBase, size: fm, style: 'month' });
 
@@ -88,8 +86,9 @@ const Calendar = (() => {
     const dow1 = new Date(y, m - 1, 1).getDay(); // 0 = Sunday
     const offset = s.calWeekStart === 'mon' ? (dow1 + 6) % 7 : dow1;
     const weeks = s.calSixWeeks ? 6 : Math.ceil((offset + days) / 7);
-    const top = mg + bandH + s.calGap * s.cellAspect;
-    const cellW = contentW / 7, cellH = Math.max(1, (H - mg - top) / weeks);
+    const top0 = mg + bandH + s.calGap * s.cellAspect;
+    const cellW = contentW / 7, cellH = Math.max(1, (H - mg - top0) / weeks);
+    const top = top0 + (s.calGridDY || 0) * s.cellAspect; // moving the table keeps its cell size
     // one type size for every day number: fit the box height, then make sure the widest two digits fit the column
     let fd = (cellH * s.calDaySize) / (box.asc + box.desc);
     const wide = Math.max(...['00', '22', '28', '30', '31', '88'].map((t) => { const q = measure(t); return q.right + q.left; }));
@@ -112,7 +111,13 @@ const Calendar = (() => {
       const isSpecial = special.has(d) || (s.calSun && col === sunCol) || (s.calSat && col === satCol);
       blocks.push({ text: t, x, y: base, size: fd, style: isSpecial ? 'month' : 'day' });
     }
-    return { cols, rows, blocks, weeks, days };
+    // horizontal rule above each week row; t = thickness in cell widths (one cell width = cellPt pt)
+    const lines = [];
+    if (s.calLines) {
+      const t = (s.calLineW || 1) / s.cellPt;
+      for (let wk = 0; wk < weeks; wk++) lines.push({ x0: mg, x1: W - mg, y: top + wk * cellH + (s.calLineDY || 0) * s.cellAspect, t });
+    }
+    return { cols, rows, blocks, lines, weeks, days };
   }
 
   /* minimal ZIP writer (deflate via CompressionStream when available, otherwise stored) */
