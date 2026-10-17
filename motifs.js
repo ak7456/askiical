@@ -188,9 +188,15 @@ const MOTIFS = (() => {
       lines: [{ d: 'M50 58C52 74 58 84 68 92' }],
     }) },
     { id: 'spiral', names: ['나선', '소용돌이', '달팽이', 'spiral', 'swirl'], build: () => {
+      // sample the Archimedean spiral every 30° and join the samples with Catmull-Rom cubics, so it stays a true curve
       const pts = [];
-      for (let t = 0; t <= 3.25 * 360; t += 8) pts.push(polar(50, 50, 2 + t * 0.036, t));
-      return { lines: [{ d: P(pts, false) }] };
+      for (let t = 0; t <= 3.25 * 360 + 1e-6; t += 30) pts.push(polar(50, 50, 2 + t * 0.036, t));
+      let d = `M${f(pts[0][0])} ${f(pts[0][1])}`;
+      for (let i = 0; i < pts.length - 1; i++) {
+        const p0 = pts[Math.max(0, i - 1)], p1 = pts[i], p2 = pts[i + 1], p3 = pts[Math.min(pts.length - 1, i + 2)];
+        d += `C${f(p1[0] + (p2[0] - p0[0]) / 6)} ${f(p1[1] + (p2[1] - p0[1]) / 6)} ${f(p2[0] - (p3[0] - p1[0]) / 6)} ${f(p2[1] - (p3[1] - p1[1]) / 6)} ${f(p2[0])} ${f(p2[1])}`;
+      }
+      return { lines: [{ d }] };
     } },
     { id: 'smile', names: ['스마일', '웃음', '얼굴', '행복', 'smile', 'face', 'happy'], build: (w) => {
       const t = Math.max(3, w * 0.7);

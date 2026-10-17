@@ -1,12 +1,25 @@
 'use strict';
-/* calendar.js — one month on one A4 portrait page, laid out on the shared cell grid.
+/* calendar.js — one month on one page (A4 / A3 / B4 / B3, portrait or landscape), laid out on the shared cell grid.
    The page is a block layout: a month name band on top and a 7-column day grid below.
    Every block carries a style: 'month' (month name and special days) or 'day' (other day numbers);
    app.js rasterises each style separately so the two can take different colour themes.
    Lengths are in cell widths: a cell is 1 wide and cellAspect tall, the page is cols × rows·cellAspect. */
 
 const Calendar = (() => {
-  const A4 = { w: 595.28, h: 841.89 }; // pt, portrait
+  // paper sizes in mm (portrait), as used by the print shop
+  const PAPERS = [
+    { id: 'A4', label: 'A4 · 210×297mm', w: 210, h: 297 },
+    { id: 'A3', label: 'A3 · 297×420mm', w: 297, h: 420 },
+    { id: 'B4', label: 'B4 · 257×364mm', w: 257, h: 364 },
+    { id: 'B3', label: 'B3 · 364×504mm', w: 364, h: 504 },
+  ];
+  const MM_PT = 72 / 25.4;
+  // page size in pt for the paper and orientation
+  function paper(id, orient) {
+    const p = PAPERS.find((x) => x.id === id) || PAPERS[0];
+    const w = p.w * MM_PT, h = p.h * MM_PT;
+    return orient === 'landscape' ? { w: h, h: w, paper: p } : { w, h, paper: p };
+  }
   const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
   const LABELS = [
@@ -24,11 +37,12 @@ const Calendar = (() => {
     }
   }
 
-  // page grid for the cell size: as close to A4 as whole cells allow
-  function grid(cellPt, cellAspect) {
+  // page grid for the cell size: as close to the paper as whole cells allow
+  function grid(s) {
+    const pg = paper(s.calPaper, s.calOrient);
     return {
-      cols: Math.max(20, Math.round(A4.w / cellPt)),
-      rows: Math.max(20, Math.round(A4.h / (cellPt * cellAspect))),
+      cols: Math.max(20, Math.round(pg.w / s.cellPt)),
+      rows: Math.max(20, Math.round(pg.h / (s.cellPt * s.cellAspect))),
     };
   }
 
@@ -48,7 +62,7 @@ const Calendar = (() => {
      x / y: text origin and baseline in cell widths; size: type size in cell widths.
      measure(text) → { asc, desc, left, right, width } per 1 unit of type size, plus box: { asc, desc } for the font. */
   function layout(s, measure) {
-    const { cols, rows } = grid(s.cellPt, s.cellAspect);
+    const { cols, rows } = grid(s);
     const W = cols, H = rows * s.cellAspect;
     const mg = s.calMargin;
     const contentW = W - 2 * mg, contentH = H - 2 * mg;
@@ -62,7 +76,7 @@ const Calendar = (() => {
     let fm = bandH / (box.asc + box.desc);
     const inkW = lm.right + lm.left;
     if (inkW * fm > contentW) fm = contentW / inkW;
-    const mBase = mg + (bandH - (box.asc + box.desc) * fm) / 2 + box.asc * fm;
+    const mBase = mg + (bandH - (box.asc + box.desc) * fm) / 2 + box.asc * fm + (s.calMonthDY || 0) * s.cellAspect;
     const mx = s.calMonthAlign === 'center' ? W / 2 - ((lm.right - lm.left) / 2) * fm : mg + lm.left * fm;
     blocks.push({ text: label, x: mx, y: mBase, size: fm, style: 'month' });
 
@@ -72,8 +86,9 @@ const Calendar = (() => {
     const dow1 = new Date(y, m - 1, 1).getDay(); // 0 = Sunday
     const offset = s.calWeekStart === 'mon' ? (dow1 + 6) % 7 : dow1;
     const weeks = s.calSixWeeks ? 6 : Math.ceil((offset + days) / 7);
-    const top = mg + bandH + s.calGap * s.cellAspect;
-    const cellW = contentW / 7, cellH = Math.max(1, (H - mg - top) / weeks);
+    const top0 = mg + bandH + s.calGap * s.cellAspect;
+    const cellW = contentW / 7, cellH = Math.max(1, (H - mg - top0) / weeks);
+    const top = top0 + (s.calGridDY || 0) * s.cellAspect; // moving the table keeps its cell size
     // one type size for every day number: fit the box height, then make sure the widest two digits fit the column
     let fd = (cellH * s.calDaySize) / (box.asc + box.desc);
     const wide = Math.max(...['00', '22', '28', '30', '31', '88'].map((t) => { const q = measure(t); return q.right + q.left; }));
@@ -96,7 +111,18 @@ const Calendar = (() => {
       const isSpecial = special.has(d) || (s.calSun && col === sunCol) || (s.calSat && col === satCol);
       blocks.push({ text: t, x, y: base, size: fd, style: isSpecial ? 'month' : 'day' });
     }
-    return { cols, rows, blocks, weeks, days };
+    // horizontal rule above each week row, spanning only the columns that hold a day;
+    // t = thickness in cell widths (one cell width = cellPt pt)
+    const lines = [];
+    if (s.calLines) {
+      const t = (s.calLineW || 1) / s.cellPt;
+      for (let wk = 0; wk < weeks; wk++) {
+        const first = Math.max(offset, wk * 7), last = Math.min(offset + days - 1, wk * 7 + 6);
+        if (first > last) continue; // empty sixth week
+        lines.push({ x0: mg + (first % 7) * cellW, x1: mg + ((last % 7) + 1) * cellW, y: top + wk * cellH + (s.calLineDY || 0) * s.cellAspect, t });
+      }
+    }
+    return { cols, rows, blocks, lines, weeks, days };
   }
 
   /* minimal ZIP writer (deflate via CompressionStream when available, otherwise stored) */
@@ -149,5 +175,5 @@ const Calendar = (() => {
     return new Blob([...local, ...central, new Uint8Array(end.buffer)], { type: 'application/zip' });
   }
 
-  return { A4, MONTHS, LABELS, monthLabel, grid, parseDays, layout, zip };
+  return { PAPERS, paper, MONTHS, LABELS, monthLabel, grid, parseDays, layout, zip };
 })();
