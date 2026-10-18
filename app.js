@@ -854,7 +854,7 @@ const SECTIONS = [
       put: (v) => { state.calSpecial = { ...state.calSpecial, [calKey()]: v }; } },
     { k: 'calMonthPalette', t: 'check', label: '월별 팔레트 자동 적용 (달 이름 · 특별한 날)', when: cal },
     { id: 'cal-mp-note', t: 'note', when: (s) => cal(s) && s.calMonthPalette,
-      text: `달을 바꾸면 그 달의 팔레트와 배경을 달 이름 색에 넣습니다. 팔레트가 없는 달은 그대로 둡니다. (지금 있는 달: ${Object.keys(Theme.MONTHLY).map((m) => m + '월').join(', ')})` },
+      text: `달을 바꾸면 그 달의 팔레트와 배경을 달 이름 색에 넣습니다. 팔레트가 없는 달은 그대로 둡니다.` },
     { id: 'cal-note', t: 'note', when: cal, text: '특별한 날은 달 이름과 같은 색 테마로 칠합니다. 색 섹션의 “편집할 색”으로 두 테마를 오가며 고치세요.' },
     { id: 'cal-export', t: 'buttons', when: cal, buttons: () => [['12달 SVG (ZIP)', () => exportYear('svg')], ['12달 PNG (ZIP)', () => exportYear('png')]] },
   ] },

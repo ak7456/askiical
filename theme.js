@@ -119,6 +119,8 @@ const Theme = (() => {
     8: { name: '8월', bg: '#ffffff', colors: ['#ffd27a', '#ff0059', '#e24a6d', '#8c3b9e'] },
     9: { name: '9월', bg: '#ffffff', colors: ['#7c8a55', '#c48e55', '#a80000', '#3d2b1f'] },
     10: { name: '10월', bg: '#ffffff', colors: ['#ffdd00', '#ff6200', '#8b4b68', '#6c5128'] },
+    11: { name: '11월', bg: '#ffffff', colors: ['#ffe761', '#56d2bf', '#b27aff', '#804200'] },
+    12: { name: '12월', bg: '#ffffff', colors: ['#d5b26c', '#ff0000', '#0c7e13', '#c20a00', '#0a2e00'] },
   };
 
   const isHex = (v) => typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v);
