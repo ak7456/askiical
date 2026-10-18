@@ -48,7 +48,7 @@ const SHAPE_DEFAULTS = {
   calOn: false, calPaper: 'A4', calOrient: 'portrait', calMonthDY: 0, calGridDY: 0,
   calLines: false, calLineMode: 'units', calLineW: 1, calLineDY: 0, calLineColor: '#ecebe4', calYear: new Date().getFullYear(), calMonth: new Date().getMonth() + 1, calLabel: 'full',
   calMonthAlign: 'left', calMonthSize: 0.2, calWeekStart: 'sun', calDayAlign: 'center', calDaySize: 0.55,
-  calMargin: 6, calGap: 2, calSixWeeks: false, calSun: true, calSat: false, calSpecial: {},
+  calMargin: 6, calGap: 2, calSixWeeks: false, calSun: true, calSat: false, calSpecial: {}, calMonthPalette: false,
   colorTarget: 'month', altColors: null,
 };
 // colour settings that differ between the month-name theme and the day-number theme in calendar mode
@@ -852,6 +852,9 @@ const SECTIONS = [
     { id: 'calSpecialText', t: 'line', label: '이 달의 특별한 날 (예: 3, 9, 24-26)', when: cal,
       get: () => state.calSpecial[calKey()] || '',
       put: (v) => { state.calSpecial = { ...state.calSpecial, [calKey()]: v }; } },
+    { k: 'calMonthPalette', t: 'check', label: '월별 팔레트 자동 적용 (달 이름 · 특별한 날)', when: cal },
+    { id: 'cal-mp-note', t: 'note', when: (s) => cal(s) && s.calMonthPalette,
+      text: `달을 바꾸면 그 달의 팔레트와 배경을 달 이름 색에 넣습니다. 팔레트가 없는 달은 그대로 둡니다. (지금 있는 달: ${Object.keys(Theme.MONTHLY).map((m) => m + '월').join(', ')})` },
     { id: 'cal-note', t: 'note', when: cal, text: '특별한 날은 달 이름과 같은 색 테마로 칠합니다. 색 섹션의 “편집할 색”으로 두 테마를 오가며 고치세요.' },
     { id: 'cal-export', t: 'buttons', when: cal, buttons: () => [['12달 SVG (ZIP)', () => exportYear('svg')], ['12달 PNG (ZIP)', () => exportYear('png')]] },
   ] },
@@ -1084,6 +1087,9 @@ function buildThemeUI(row) {
   row.innerHTML =
     `<div class="theme-presets" id="theme-presets" role="group" aria-label="테마 팔레트">${Theme.PRESETS.map((p, i) =>
       `<button type="button" data-i="${i}" title="${AK.esc(p.name)} · 배경과 팔레트를 함께 바꿉니다"><span class="stripe" style="background:${p.bg}">${p.colors.map((c) => `<i style="background:${c}"></i>`).join('')}</span><span>${AK.esc(p.name)}</span></button>`).join('')}</div>` +
+    `<div class="theme-presets-label">월별 팔레트</div>` +
+    `<div class="theme-presets" id="theme-monthly" role="group" aria-label="월별 팔레트">${Object.entries(Theme.MONTHLY).map(([m, p]) =>
+      `<button type="button" data-m="${m}" title="${AK.esc(p.name)} 팔레트 · 배경과 팔레트를 함께 바꿉니다"><span class="stripe" style="background:${p.bg};box-shadow:inset 0 0 0 1px var(--line)">${p.colors.map((c) => `<i style="background:${c}"></i>`).join('')}</span><span>${AK.esc(p.name)}</span></button>`).join('')}</div>` +
     `<div class="swatches" id="swatches" aria-label="팔레트 색"></div>` +
     `<canvas class="pal-bar" id="pal-bar" aria-label="팔레트가 퍼지는 순서"></canvas>` +
     `<div class="row-btns"><button type="button" id="pal-harmony" title="어울리는 색 조합을 무작위로 만듭니다">조화 팔레트</button>` +
@@ -1102,6 +1108,12 @@ function buildThemeUI(row) {
     const b = e.target.closest('button');
     if (!b) return;
     const p = Theme.PRESETS[+b.dataset.i];
+    usePalette(p.bg, p.colors);
+  };
+  row.querySelector('#theme-monthly').onclick = (e) => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    const p = Theme.MONTHLY[b.dataset.m];
     usePalette(p.bg, p.colors);
   };
   row.querySelector('#pal-harmony').onclick = () => {
@@ -1180,7 +1192,8 @@ function set(k, v) {
     syncControls();
     toast('달력의 작은 날짜가 읽히도록 셀 너비를 3pt로 바꿨습니다. 출력 섹션에서 조절할 수 있습니다.');
   }
-  if (k === 'calMonth' || k === 'calYear') syncControls(); // month label examples and special days follow the month
+  if (k === 'calMonth' || k === 'calYear' || k === 'calMonthPalette') applyMonthPalette();
+  if (k === 'calMonth' || k === 'calYear' || k === 'calMonthPalette') syncControls(); // month label examples and special days follow the month
   if (k === 'cellAspect') densityCache.clear();
   if (k === 'animate' || k === 'fps') syncAnimation();
   syncVisibility();
@@ -1209,7 +1222,20 @@ function stepMonth(d) {
   let m = state.calMonth + d, y = state.calYear;
   if (m < 1) { m = 12; y--; } else if (m > 12) { m = 1; y++; }
   state.calMonth = m; state.calYear = y;
+  applyMonthPalette();
   syncControls(); persist(); requestRender();
+}
+// calendar: put the month's own palette (Theme.MONTHLY) into the month-name colour set
+function applyMonthPalette() {
+  const p = state.calOn && state.calMonthPalette && Theme.MONTHLY[state.calMonth];
+  if (!p) return false;
+  const set = state.colorTarget === 'month' ? state : state.altColors;
+  set.palette = p.colors.slice();
+  set.themeOn = true;
+  state.bg = p.bg;
+  renderThemeUI();
+  renderRamp();
+  return true;
 }
 
 async function onFontFile(e) {
@@ -1556,6 +1582,7 @@ async function exportYear(kind) {
   if (!state.calOn || exporting) return;
   exporting = true;
   const keep = state.calMonth, year = state.calYear;
+  const keepColors = { bg: state.bg, cur: pickColors(state), alt: pickColors(state.altColors) };
   const enc = new TextEncoder();
   const files = [];
   try {
@@ -1567,6 +1594,7 @@ async function exportYear(kind) {
       toast(`${year}년 ${m}월을 만드는 중입니다… (${m}/12)`);
       await new Promise((r) => setTimeout(r, 0)); // let the toast paint
       state.calMonth = m;
+      applyMonthPalette();
       const o = outputSize();
       const ops = buildOps(0);
       const name = `askiical-${year}-${String(m).padStart(2, '0')}-${paperTag()}`;
@@ -1589,6 +1617,8 @@ async function exportYear(kind) {
     toast('12달 내보내기에 실패했습니다: ' + err.message);
   } finally {
     state.calMonth = keep;
+    state.bg = keepColors.bg; Object.assign(state, keepColors.cur); state.altColors = keepColors.alt;
+    renderThemeUI(); renderRamp();
     exporting = false;
     requestRender();
   }

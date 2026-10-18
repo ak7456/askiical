@@ -442,3 +442,4 @@ dialog::backdrop { background: rgb(0 0 0 / 0.68); backdrop-filter: blur(2px); }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; }
 }
+.theme-presets-label { font-size: 10.5px; color: var(--mute); margin: 8px 0 4px; letter-spacing: 0.04em; }

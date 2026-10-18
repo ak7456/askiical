@@ -106,7 +106,17 @@ const Theme = (() => {
     { name: '모노', bg: '#0b0b0a', colors: ['#ffffff', '#a8a8a8', '#5c5c5c'] },
   ];
 
+  // the user's month palettes (2027 calendar), read from their exported SVGs; keyed by month number.
+  // Calendar mode can apply them to the month-name set automatically (see calMonthPalette in app.js).
+  const MONTHLY = {
+    1: { name: '1월', bg: '#ffffff', colors: ['#e0acff', '#ff9ee0', '#0fc37c', '#73933d'] },
+    2: { name: '2월', bg: '#ffffff', colors: ['#16b7d8', '#17999a', '#007bff', '#44468d'] },
+    3: { name: '3월', bg: '#ffffff', colors: ['#ff48b0', '#0078bf', '#fff700', '#00a95c'] },
+    4: { name: '4월', bg: '#ffffff', colors: ['#a494ff', '#a0c4ff', '#ffadc6', '#ff6f91'] },
+    5: { name: '5월', bg: '#ffffff', colors: ['#feb3ff', '#55a35c', '#008035', '#004d47'] },
+  };
+
   const isHex = (v) => typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v);
 
-  return { lut, harmony, lightness, PRESETS, isHex };
+  return { lut, harmony, lightness, PRESETS, MONTHLY, isHex };
 })();
