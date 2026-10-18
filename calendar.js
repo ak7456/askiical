@@ -12,6 +12,7 @@ const Calendar = (() => {
     { id: 'A3', label: 'A3 · 297×420mm', w: 297, h: 420 },
     { id: 'B4', label: 'B4 · 257×364mm', w: 257, h: 364 },
     { id: 'B3', label: 'B3 · 364×504mm', w: 364, h: 504 },
+    { id: '335x700', label: '335×700mm', w: 335, h: 700 },
   ];
   const MM_PT = 72 / 25.4;
   // page size in pt for the paper and orientation
