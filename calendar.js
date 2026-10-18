@@ -60,6 +60,18 @@ const Calendar = (() => {
     return out;
   }
 
+  // "1 신정, 5-7 설날, 9 대체공휴일" → Map(day → label); a range labels every day in it
+  function parseHolidays(text, days) {
+    const out = new Map();
+    for (const part of String(text || '').split(/[,;\n]+/)) {
+      const m = /^\s*(\d{1,2})(?:\s*-\s*(\d{1,2}))?\s+(.+?)\s*$/.exec(part);
+      if (!m) continue;
+      const a = +m[1], b = m[2] ? +m[2] : a;
+      for (let d = Math.min(a, b); d <= Math.max(a, b); d++) if (d >= 1 && d <= days) out.set(d, m[3]);
+    }
+    return out;
+  }
+
   /* layout(s, measure) → { cols, rows, blocks: [{ text, x, y, size, style }] }
      x / y: text origin and baseline in cell widths; size: type size in cell widths.
      measure(text) → { asc, desc, left, right, width } per 1 unit of type size, plus box: { asc, desc } for the font. */
@@ -95,7 +107,10 @@ const Calendar = (() => {
     let fd = (cellH * s.calDaySize) / (box.asc + box.desc);
     const wide = Math.max(...['00', '22', '28', '30', '31', '88'].map((t) => { const q = measure(t); return q.right + q.left; }));
     if (wide * fd > cellW * 0.9) fd = (cellW * 0.9) / wide;
-    const special = parseDays((s.calSpecial || {})[`${y}-${String(m).padStart(2, '0')}`], days);
+    const mk = `${y}-${String(m).padStart(2, '0')}`;
+    const special = parseDays((s.calSpecial || {})[mk], days);
+    const holidays = parseHolidays((s.calHol || {})[mk], days);
+    const labels = []; // holiday names under the day number: x anchor, top edge (below the number box), alignment
     const sunCol = s.calWeekStart === 'mon' ? 6 : 0, satCol = s.calWeekStart === 'mon' ? 5 : 6;
     const inset = Math.min(cellW, cellH) * 0.08;
     for (let d = 1; d <= days; d++) {
@@ -110,8 +125,10 @@ const Calendar = (() => {
         x = x0 + cellW / 2 - ((q.right - q.left) / 2) * fd;
         base = y0 + (cellH - (box.asc + box.desc) * fd) / 2 + box.asc * fd;
       }
-      const isSpecial = special.has(d) || (s.calSun && col === sunCol) || (s.calSat && col === satCol);
+      const hol = holidays.get(d);
+      const isSpecial = special.has(d) || (s.calSun && col === sunCol) || (s.calSat && col === satCol) || (hol && s.calHolSpecial);
       blocks.push({ text: t, x, y: base, size: fd, style: isSpecial ? 'month' : 'day' });
+      if (hol) labels.push({ text: hol, d, x: s.calDayAlign === 'left' ? x - q.left * fd : x + ((q.right - q.left) / 2) * fd, top: base + box.desc * fd, align: s.calDayAlign === 'left' ? 'left' : 'center' });
     }
     // horizontal rule above each week row, spanning only the columns that hold a day;
     // t = thickness in cell widths (one cell width = cellPt pt)
@@ -124,7 +141,7 @@ const Calendar = (() => {
         lines.push({ x0: mg + (first % 7) * cellW, x1: mg + ((last % 7) + 1) * cellW, y: top + wk * cellH + (s.calLineDY || 0) * s.cellAspect, t });
       }
     }
-    return { cols, rows, blocks, lines, weeks, days };
+    return { cols, rows, blocks, lines, labels, weeks, days };
   }
 
   /* minimal ZIP writer (deflate via CompressionStream when available, otherwise stored) */
@@ -177,5 +194,5 @@ const Calendar = (() => {
     return new Blob([...local, ...central, new Uint8Array(end.buffer)], { type: 'application/zip' });
   }
 
-  return { PAPERS, paper, MONTHS, LABELS, monthLabel, grid, parseDays, layout, zip };
+  return { PAPERS, paper, MONTHS, LABELS, monthLabel, grid, parseDays, parseHolidays, layout, zip };
 })();
