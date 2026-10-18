@@ -328,6 +328,15 @@ const Outline = (() => {
     try { fonts[family] = [opentype.parse(buffer.slice(0))]; return true; } catch (e) { return false; }
   }
 
+  // outline of a text run with the font's kerning; x is the left edge, or the centre for align 'center'
+  function textD(text, family, x, y, size, align) {
+    const f = (fonts[family] || [])[0];
+    if (!f) return null;
+    const opt = { kerning: true };
+    const x0 = align === 'center' ? x - f.getAdvanceWidth(text, size, opt) / 2 : x;
+    return f.getPath(text, x0, y, size, opt).toPathData(2);
+  }
+
   // outline of one character in its cell, matching the canvas placement (app.js charOrigin):
   // align 'cap' centres the cap height, 'ink' centres the glyph's ink box, 'em' uses the em-box middle.
   // weight > 0 adds a round-joined stroke (in units of type size) as a separate filled path.
@@ -417,6 +426,17 @@ const Outline = (() => {
     // calendar rules drawn as solid lines (cell-width units → artboard units)
     const rules = (ctx.rules || []).length ? `<g id="calendar-rules" fill="${state.calLineColor}">${ctx.rules.map((l) =>
       `<rect x="${R(l.x0 * cw)}" y="${R((l.y - l.t / 2) * cw)}" width="${R((l.x1 - l.x0) * cw)}" height="${R(l.t * cw)}"/>`).join('')}</g>` : '';
+    // calendar holiday labels: solid text, outlined when the label font's data is loaded
+    let labels = '', labelText = false;
+    if ((ctx.labels || []).length) {
+      const fam = state.calHolFont;
+      labels = `<g id="holiday-labels" fill="${ctx.labels[0].color}">${ctx.labels.map((l) => {
+        const d = textD(l.text, fam, l.x * cw, l.y * cw, l.size * cw, l.align);
+        if (d) return `<path d="${d}"/>`;
+        labelText = true;
+        return `<text x="${R(l.x * cw)}" y="${R(l.y * cw)}" font-size="${R(l.size * cw)}" font-family="${AK.esc(fam)}"${l.align === 'center' ? ' text-anchor="middle"' : ''}>${AK.esc(l.text)}</text>`;
+      }).join('')}</g>`;
+    }
     const svg = `<?xml version="1.0" encoding="UTF-8"?>\n` +
       `<svg xmlns="http://www.w3.org/2000/svg" version="1.1" viewBox="0 0 ${R(W)} ${R(H)}" width="${R(W)}${ctx.unit || 'px'}" height="${R(H)}${ctx.unit || 'px'}">` +
       `<g id="background"><rect x="0" y="0" width="${R(W)}" height="${R(H)}" fill="${state.bg}"/></g>` +
@@ -425,9 +445,10 @@ const Outline = (() => {
       layer('background-units', faint, ` opacity="${state.bgAlpha}"`) +
       layer('units', ink) +
       rules +
+      labels +
       `</svg>`;
-    return { svg, count, missing: [...missing], colors: new Set([...ink.keys(), ...boxes.keys()]).size };
+    return { svg, count, labelText, missing: [...missing], colors: new Set([...ink.keys(), ...boxes.keys()]).size };
   }
 
-  return { ensureFonts, addFont, build, charD, parse, fillD, polylines, strokeD, strokeCurveD };
+  return { ensureFonts, addFont, hasFont: (fam) => !!fonts[fam], build, textD, charD, parse, fillD, polylines, strokeD, strokeCurveD };
 })();

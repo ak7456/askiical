@@ -49,6 +49,8 @@ const SHAPE_DEFAULTS = {
   calLines: false, calLineMode: 'units', calLineW: 1, calLineDY: 0, calLineColor: '#ecebe4', calYear: new Date().getFullYear(), calMonth: new Date().getMonth() + 1, calLabel: 'full',
   calMonthAlign: 'left', calMonthSize: 0.2, calWeekStart: 'sun', calDayAlign: 'center', calDaySize: 0.55,
   calMargin: 6, calGap: 2, calSixWeeks: false, calSun: true, calSat: false, calSpecial: {}, calMonthPalette: false,
+  // holiday names under the day numbers: solid text in a font of the user's (outlined in SVG once its data is loaded)
+  calHol: {}, calHolSpecial: true, calHolFont: 'YMG Gothic', calHolPt: 6, calHolDY: 0, calHolColorMode: 'custom', calHolColor: '#5c5c5c', calHolColorIdx: 1,
   colorTarget: 'month', altColors: null,
 };
 // colour settings that differ between the month-name theme and the day-number theme in calendar mode
@@ -147,6 +149,8 @@ function applyProject(p, quiet) {
   if (!s.altColors.palette.length) s.altColors.palette = SHAPE_DEFAULTS.altColors.palette.slice();
   const sp = s.calSpecial && typeof s.calSpecial === 'object' ? s.calSpecial : {};
   s.calSpecial = Object.fromEntries(Object.entries(sp).filter(([k, v]) => /^\d{4}-\d{2}$/.test(k) && typeof v === 'string'));
+  const hl = s.calHol && typeof s.calHol === 'object' ? s.calHol : {};
+  s.calHol = Object.fromEntries(Object.entries(hl).filter(([k, v]) => /^\d{4}-\d{2}$/.test(k) && typeof v === 'string'));
   if (s.calMonth < 1 || s.calMonth > 12) s.calMonth = SHAPE_DEFAULTS.calMonth;
   if (!Calendar.PAPERS.some((pp) => pp.id === s.calPaper)) s.calPaper = 'A4';
   if (!['month', 'day'].includes(s.colorTarget)) s.colorTarget = 'month';
@@ -284,8 +288,8 @@ function calMeasure() {
 let calCache = { key: '', v: null };
 function calLayout() {
   const key = ['calYear', 'calMonth', 'calLabel', 'calMonthAlign', 'calMonthSize', 'calWeekStart', 'calDayAlign', 'calDaySize',
-    'calPaper', 'calOrient', 'calMonthDY', 'calGridDY', 'calLines', 'calLineW', 'calLineDY', 'calMargin', 'calGap', 'calSixWeeks', 'calSun', 'calSat', 'font', 'weight', 'italic', 'cellPt', 'cellAspect'].map((k) => state[k]).join('|') +
-    '|' + JSON.stringify(state.calSpecial) + '|' + fontEpoch;
+    'calPaper', 'calOrient', 'calMonthDY', 'calGridDY', 'calLines', 'calLineW', 'calLineDY', 'calMargin', 'calGap', 'calSixWeeks', 'calSun', 'calSat', 'calHolSpecial', 'font', 'weight', 'italic', 'cellPt', 'cellAspect'].map((k) => state[k]).join('|') +
+    '|' + JSON.stringify(state.calSpecial) + '|' + JSON.stringify(state.calHol) + '|' + fontEpoch;
   if (calCache.key !== key) calCache = { key, v: Calendar.layout(state, calMeasure()) };
   return calCache.v;
 }
@@ -657,6 +661,18 @@ function paint(ctx, W, H, ops, px, vp) {
     ctx.fillStyle = state.calLineColor;
     for (const l of rules) ctx.fillRect(l.x0 * cw, (l.y - l.t / 2) * cw, (l.x1 - l.x0) * cw, l.t * cw);
   }
+  const labels = holidayLabels();
+  if (labels.length) { // holiday names as solid text over the units
+    base();
+    ctx.globalAlpha = 1;
+    ctx.textBaseline = 'alphabetic';
+    for (const l of labels) {
+      ctx.font = `${l.size * cw}px ${holFontCss()}`;
+      ctx.textAlign = l.align;
+      ctx.fillStyle = l.color;
+      ctx.fillText(l.text, l.x * cw, l.y * cw);
+    }
+  }
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.globalAlpha = 1;
 }
@@ -852,6 +868,21 @@ const SECTIONS = [
     { id: 'calSpecialText', t: 'line', label: '이 달의 특별한 날 (예: 3, 9, 24-26)', when: cal,
       get: () => state.calSpecial[calKey()] || '',
       put: (v) => { state.calSpecial = { ...state.calSpecial, [calKey()]: v }; } },
+    { id: 'calHolText', t: 'line', label: '이 달의 공휴일 (예: 1 신정, 5-7 설날)', when: cal,
+      get: () => state.calHol[calKey()] || '',
+      put: (v) => { state.calHol = { ...state.calHol, [calKey()]: v }; } },
+    { k: 'calHolSpecial', t: 'check', label: '공휴일을 특별한 날로', when: cal },
+    { id: 'calHolFontName', t: 'line', label: '공휴일 텍스트 서체 (설치된 서체 이름)', when: cal,
+      get: () => state.calHolFont, put: (v) => { state.calHolFont = v.trim() || 'YMG Gothic'; } },
+    { id: 'cal-hol-font', t: 'buttons', when: cal, buttons: () => [['설치된 서체 불러오기', loadLocalHolidayFont]] },
+    { id: 'cal-hol-file', t: 'file', label: '공휴일 서체 파일 올리기 (.ttf .otf)', accept: '.ttf,.otf', when: cal, onFile: onHolidayFontFile },
+    { id: 'cal-hol-note', t: 'note', when: cal,
+      text: '화면과 PNG는 이름으로 찾은 설치 서체로 그립니다. SVG에서 아웃라인으로 바꾸려면 “설치된 서체 불러오기”(Chrome·Edge)나 파일 올리기로 서체 데이터를 한 번 불러오세요. 새로고침하면 다시 불러와야 합니다.' },
+    { k: 'calHolPt', t: 'range', label: '공휴일 텍스트 크기', min: 2, max: 36, step: 0.25, unit: ' pt', when: cal },
+    { k: 'calHolDY', t: 'range', label: '공휴일 텍스트 세로 위치 (행)', min: -10, max: 10, step: 0.1, when: cal },
+    { k: 'calHolColorMode', t: 'seg', label: '공휴일 텍스트 색', when: cal, options: () => opt([['custom', '직접 고르기'], ['month', '달 이름 팔레트']]) },
+    { k: 'calHolColor', t: 'color', label: '색', when: (s) => cal(s) && s.calHolColorMode === 'custom' },
+    { k: 'calHolColorIdx', t: 'range', label: '팔레트의 몇 번째 색', min: 1, max: 8, step: 1, when: (s) => cal(s) && s.calHolColorMode === 'month' },
     { k: 'calMonthPalette', t: 'check', label: '월별 팔레트 자동 적용 (달 이름 · 특별한 날)', when: cal },
     { id: 'cal-mp-note', t: 'note', when: (s) => cal(s) && s.calMonthPalette,
       text: `달을 바꾸면 그 달의 팔레트와 배경을 달 이름 색에 넣습니다. 팔레트가 없는 달은 그대로 둡니다.` },
@@ -1015,7 +1046,7 @@ function buildSections(host, sections) {
         it.input.addEventListener('input', () => set(it.k, [...it.input.value].slice(0, 4).join('')));
       } else if (it.t === 'file') {
         row.innerHTML = `<label class="btn" for="${id}">${it.label}</label><input type="file" id="${id}" accept="${it.accept}" hidden>`;
-        row.querySelector('input').addEventListener('change', onFontFile);
+        row.querySelector('input').addEventListener('change', it.onFile || onFontFile);
       } else if (it.t === 'theme') {
         buildThemeUI(row);
       } else if (it.t === 'number') {
@@ -1225,6 +1256,67 @@ function stepMonth(d) {
   applyMonthPalette();
   syncControls(); persist(); requestRender();
 }
+// holiday labels in cell widths: the baseline sits 0.8 type sizes below the top edge under the day number
+function holidayLabels() {
+  if (!state.calOn) return [];
+  const lay = calLayout();
+  if (!lay.labels.length) return [];
+  const size = state.calHolPt / state.cellPt;
+  const dy = state.calHolDY * state.cellAspect;
+  let color = state.calHolColor;
+  if (state.calHolColorMode === 'month') {
+    const m = colorsFor('month');
+    color = m.themeOn && m.palette.length ? m.palette[Math.min(state.calHolColorIdx, m.palette.length) - 1] : m.fg;
+  }
+  return lay.labels.map((l) => ({ text: l.text, x: l.x, y: l.top + size * 0.8 + dy, size, align: l.align, color }));
+}
+const holFontCss = () => `"${state.calHolFont.replace(/"/g, '')}", "IBM Plex Sans KR", sans-serif`;
+
+// label font data: registered under its own family name so the preview and the outline export use the same face
+async function useHolidayFont(buf, fallbackName) {
+  await Outline.ensureFonts(); // brings in opentype.js
+  let fam = fallbackName;
+  try {
+    const f = opentype.parse(buf.slice(0));
+    const n = f.names.preferredFamily || f.names.typographicFamily || f.names.fontFamily || {};
+    fam = n.en || n.ko || Object.values(n)[0] || fam;
+  } catch (e) { /* unreadable for outlines; the preview still works */ }
+  const face = new FontFace(fam, buf.slice(0));
+  await face.load();
+  document.fonts.add(face);
+  userFonts[fam] = buf.slice(0);
+  state.calHolFont = fam;
+  syncControls(); persist(); requestRender();
+  return fam;
+}
+async function loadLocalHolidayFont() {
+  if (!window.queryLocalFonts) { toast('이 브라우저는 설치된 서체를 읽을 수 없습니다 (Chrome·Edge에서 됩니다). 서체 파일을 올려 주세요.'); return; }
+  try {
+    const norm = (t) => String(t).toLowerCase().replace(/[\s_-]+/g, '');
+    const want = norm(state.calHolFont);
+    const all = await window.queryLocalFonts();
+    const hits = all.filter((f) => norm(f.family) === want || norm(f.fullName).startsWith(want) || norm(f.postscriptName).startsWith(want));
+    if (!hits.length) { toast(`설치된 서체에서 “${state.calHolFont}”을 찾지 못했습니다. 이름을 확인하거나 파일을 올려 주세요.`); return; }
+    const pick = hits.find((f) => norm(f.fullName) === want) || hits.find((f) => /^(regular|normal|book|medium)$/i.test(f.style)) || hits[0];
+    const buf = await (await pick.blob()).arrayBuffer();
+    await useHolidayFont(buf, pick.family);
+    toast(`“${pick.fullName}”을 불러왔습니다. SVG에서 공휴일 텍스트가 아웃라인이 됩니다. 굵기를 바꾸려면 서체 이름에 굵기까지 적으세요 (예: ${pick.family} Bold).`);
+  } catch (err) {
+    toast('설치된 서체를 읽지 못했습니다: ' + err.message);
+  }
+}
+async function onHolidayFontFile(e) {
+  const f = e.target.files[0];
+  e.target.value = '';
+  if (!f) return;
+  try {
+    const fam = await useHolidayFont(await f.arrayBuffer(), f.name.replace(/\.[^.]+$/, ''));
+    toast(`공휴일 서체 “${fam}”을 불러왔습니다.`);
+  } catch (err) {
+    toast('서체 파일을 읽지 못했습니다. TTF나 OTF 파일인지 확인하세요.');
+  }
+}
+
 // calendar: put the month's own palette (Theme.MONTHLY) into the month-name colour set
 function applyMonthPalette() {
   const p = state.calOn && state.calMonthPalette && Theme.MONTHLY[state.calMonth];
@@ -1578,6 +1670,7 @@ const userFonts = {}; // uploaded font files by family, for outline export
 
 // 12 months of the selected year in one ZIP, same settings for every page
 let exporting = false;
+const LABEL_TEXT_MSG = '공휴일 텍스트는 서체 데이터가 없어 텍스트로 남았습니다. “설치된 서체 불러오기”나 파일 올리기 후 다시 저장하면 아웃라인이 됩니다.';
 async function exportYear(kind) {
   if (!state.calOn || exporting) return;
   exporting = true;
@@ -1585,6 +1678,7 @@ async function exportYear(kind) {
   const keepColors = { bg: state.bg, cur: pickColors(state), alt: pickColors(state.altColors) };
   const enc = new TextEncoder();
   const files = [];
+  let labelText = false;
   try {
     if (kind === 'svg') {
       await Outline.ensureFonts();
@@ -1599,7 +1693,8 @@ async function exportYear(kind) {
       const ops = buildOps(0);
       const name = `askiical-${year}-${String(m).padStart(2, '0')}-${paperTag()}`;
       if (kind === 'svg') {
-        const res = Outline.build({ state, dims: dims(), ops, glyphById, charPx, W: o.Wpt, H: o.Hpt, unit: 'pt', rules: vectorRules() });
+        const res = Outline.build({ state, dims: dims(), ops, glyphById, charPx, W: o.Wpt, H: o.Hpt, unit: 'pt', rules: vectorRules(), labels: holidayLabels() });
+        if (res.labelText) labelText = true;
         files.push({ name: name + '.svg', data: enc.encode(res.svg) });
       } else {
         const cv = document.createElement('canvas');
@@ -1612,7 +1707,7 @@ async function exportYear(kind) {
     }
     toast('ZIP으로 묶는 중입니다…');
     download(`askiical-${year}-calendar-${paperTag()}-${kind}.zip`, await Calendar.zip(files));
-    toast(`${year}년 12달을 ${kind.toUpperCase()}로 묶어 저장했습니다.`);
+    toast(`${year}년 12달을 ${kind.toUpperCase()}로 묶어 저장했습니다.` + (labelText ? ' ' + LABEL_TEXT_MSG : ''));
   } catch (err) {
     toast('12달 내보내기에 실패했습니다: ' + err.message);
   } finally {
@@ -1632,9 +1727,10 @@ $('#ex-svg').onclick = async () => {
     await Outline.ensureFonts();
     for (const [fam, buf] of Object.entries(userFonts)) Outline.addFont(fam, buf);
     const o = outputSize();
-    const res = Outline.build({ state, dims: dims(), ops: buildOps(frame), glyphById, charPx, W: o.Wpt, H: o.Hpt, unit: 'pt', rules: vectorRules() });
+    const res = Outline.build({ state, dims: dims(), ops: buildOps(frame), glyphById, charPx, W: o.Wpt, H: o.Hpt, unit: 'pt', rules: vectorRules(), labels: holidayLabels() });
     download(baseName() + '-outline.svg', new Blob([res.svg], { type: 'image/svg+xml' }));
-    toast(res.missing.length
+    if (res.labelText) toast(LABEL_TEXT_MSG);
+    else toast(res.missing.length
       ? `아웃라인 SVG로 저장했습니다. 서체에 없는 문자 ${res.missing.join(' ')} 는 텍스트로 남았습니다.`
       : `아웃라인 SVG로 저장했습니다. 모든 유닛이 채움 패스입니다 (${res.count.toLocaleString()}개, ${res.colors}색).`);
   } catch (err) {
