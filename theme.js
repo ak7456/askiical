@@ -106,7 +106,24 @@ const Theme = (() => {
     { name: '모노', bg: '#0b0b0a', colors: ['#ffffff', '#a8a8a8', '#5c5c5c'] },
   ];
 
+  // the user's month palettes (2027 calendar), read from their exported SVGs; keyed by month number.
+  // Calendar mode can apply them to the month-name set automatically (see calMonthPalette in app.js).
+  const MONTHLY = {
+    1: { name: '1월', bg: '#ffffff', colors: ['#e0acff', '#ff9ee0', '#0fc37c', '#73933d'] },
+    2: { name: '2월', bg: '#ffffff', colors: ['#16b7d8', '#17999a', '#007bff', '#44468d'] },
+    3: { name: '3월', bg: '#ffffff', colors: ['#ff48b0', '#0078bf', '#fff700', '#00a95c'] },
+    4: { name: '4월', bg: '#ffffff', colors: ['#a494ff', '#a0c4ff', '#ffadc6', '#ff6f91'] },
+    5: { name: '5월', bg: '#ffffff', colors: ['#feb3ff', '#55a35c', '#008035', '#004d47'] },
+    6: { name: '6월', bg: '#ffffff', colors: ['#769323', '#b62c2a', '#5c2a8d', '#07343b'] },
+    7: { name: '7월', bg: '#ffffff', colors: ['#ffadad', '#afc332', '#0095ff', '#665c00'] },
+    8: { name: '8월', bg: '#ffffff', colors: ['#ffd27a', '#ff0059', '#e24a6d', '#8c3b9e'] },
+    9: { name: '9월', bg: '#ffffff', colors: ['#7c8a55', '#c48e55', '#a80000', '#3d2b1f'] },
+    10: { name: '10월', bg: '#ffffff', colors: ['#ffdd00', '#ff6200', '#8b4b68', '#6c5128'] },
+    11: { name: '11월', bg: '#ffffff', colors: ['#ffe761', '#56d2bf', '#b27aff', '#804200'] },
+    12: { name: '12월', bg: '#ffffff', colors: ['#d5b26c', '#ff0000', '#0c7e13', '#c20a00', '#0a2e00'] },
+  };
+
   const isHex = (v) => typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v);
 
-  return { lut, harmony, lightness, PRESETS, isHex };
+  return { lut, harmony, lightness, PRESETS, MONTHLY, isHex };
 })();
