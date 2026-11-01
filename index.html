@@ -14,7 +14,11 @@
   <header class="top">
     <div class="brand">
       <h1>askiical</h1>
-      <p class="sub">ASCII 유닛으로 한 글자를 짓는 타이포그래피 시뮬레이터</p>
+      <p class="sub" id="tool-sub">ASCII 유닛으로 한 글자를 짓는 타이포그래피 시뮬레이터</p>
+      <div class="seg-inline tool-switch" id="tool-switch" role="group" aria-label="도구">
+        <button type="button" data-tool="letter" title="한 글자와 달력을 유닛으로 그립니다">글자 · 달력</button>
+        <button type="button" data-tool="image" title="이미지를 같은 방식으로 유닛으로 그립니다">이미지</button>
+      </div>
     </div>
     <nav class="presets" aria-label="프리셋">
       <span class="eyebrow">프리셋</span>
