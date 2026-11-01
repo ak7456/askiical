@@ -52,6 +52,8 @@ const SHAPE_DEFAULTS = {
   // holiday names under the day numbers: solid text in a font of the user's (outlined in SVG once its data is loaded)
   calHol: {}, calHolSpecial: true, calHolFont: 'YMG Gothic', calHolPt: 6, calHolDY: 0, calHolColorMode: 'custom', calHolColor: '#5c5c5c', calHolColorIdx: 1,
   colorTarget: 'month', altColors: null,
+  // image tool: the picture is sampled per cell into ink coverage (and optionally its own colours)
+  imgCols: 120, imgTone: 'auto', imgLo: 0, imgHi: 1, imgColor: 'theme', imgQuant: 8,
 };
 // colour settings that differ between the month-name theme and the day-number theme in calendar mode
 const COLOR_KEYS = ['fg', 'themeOn', 'palette', 'colorMode', 'colorBlend', 'colorScope', 'colorScale', 'colorAngle', 'colorSpread', 'colorSeed'];
@@ -97,8 +99,17 @@ const PRESETS = [
       bgUnitGlyph: '', unitFont: 'Space Mono' } },
 ];
 
+/* ---------- tools */
+// one page, two tools: the letter/calendar tool and the image tool. Each keeps its own saved state;
+// project JSON has the same format in both, so settings move freely between them.
+let TOOL = /[?&]tool=image\b/.test(location.search) || location.hash === '#image' ? 'image' : 'letter';
+const isImg = () => TOOL === 'image';
+const letterTool = (s) => !s.calOn && !isImg();
+// the image tool never shows a calendar, but keeps an imported calOn so the JSON goes back unchanged
+let carriedCalOn = false;
+
 /* ---------- state */
-const STORE_KEY = 'askiical:v1';
+const storeKey = () => (isImg() ? 'askiical:image:v1' : 'askiical:v1');
 let state = makeDefaultState();
 
 function makeDefaultState() {
@@ -107,12 +118,13 @@ function makeDefaultState() {
   s.calSpecial = {};
   s.units = [...' .:-=+*#%@'].map((c) => ({ id: AK.uid(), kind: 'char', value: c, on: true }));
   s.units.push({ id: AK.uid(), kind: 'glyph', glyph: 'b-box', on: true }, { id: AK.uid(), kind: 'glyph', glyph: 'b-cross', on: true });
+  if (isImg()) Object.assign(s, { shade: 'solid', halo: 0, edge: 0, grain: 0.04, threshold: 0.04, cellPt: 4 }); // a picture keeps its own shading
   return s;
 }
 
 function loadStored() {
   try {
-    const raw = localStorage.getItem(STORE_KEY);
+    const raw = localStorage.getItem(storeKey());
     if (raw) applyProject(JSON.parse(raw), true);
   } catch (e) { /* storage unavailable or corrupt: keep defaults */ }
 }
@@ -120,12 +132,13 @@ let saveTimer = 0;
 function persist() {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
-    try { localStorage.setItem(STORE_KEY, JSON.stringify(projectJSON())); } catch (e) { /* ignore */ }
+    try { localStorage.setItem(storeKey(), JSON.stringify(projectJSON())); } catch (e) { /* ignore */ }
   }, 400);
 }
 function projectJSON() {
-  const out = { app: 'askiical', version: 1 };
+  const out = { app: 'askiical', version: 1, tool: TOOL };
   for (const k of Object.keys(SHAPE_DEFAULTS)) out[k] = state[k];
+  if (isImg()) out.calOn = carriedCalOn;
   out.units = state.units;
   out.glyphs = state.glyphs;
   return out;
@@ -154,6 +167,16 @@ function applyProject(p, quiet) {
   if (s.calMonth < 1 || s.calMonth > 12) s.calMonth = SHAPE_DEFAULTS.calMonth;
   if (!Calendar.PAPERS.some((pp) => pp.id === s.calPaper)) s.calPaper = 'A4';
   if (!['month', 'day'].includes(s.colorTarget)) s.colorTarget = 'month';
+  if (isImg()) {
+    carriedCalOn = s.calOn;
+    s.calOn = false;
+    if (s.colorTarget === 'day') { // show the month-name colours, as the letter tool does outside calendar mode
+      const day = pickColors(s);
+      Object.assign(s, pickColors(s.altColors));
+      s.altColors = day;
+      s.colorTarget = 'month';
+    }
+  }
   state = s;
   if (!quiet) afterStructuralChange();
 }
@@ -219,6 +242,10 @@ function letterLayout() {
   return v;
 }
 function dims() {
+  if (isImg()) {
+    const src = source();
+    return { cols: state.imgCols, rows: Math.max(4, Math.round((state.imgCols * src.height) / src.width / state.cellAspect)) };
+  }
   if (state.calOn) return Calendar.grid(state);
   const l = letterLayout();
   return { cols: l.cols, rows: l.rows };
@@ -334,6 +361,7 @@ function rasterCalendar() {
 }
 
 function raster() {
+  if (isImg()) return rasterImage();
   if (state.calOn) return rasterCalendar();
   styleMap = null;
   const { cols, rows } = dims();
@@ -379,6 +407,122 @@ function raster() {
   for (let c = 0; c < cols; c++) { if (edge((rows - 1) * cols + c)) { rasterClip.push('아래'); break; } }
   for (let r = 0; r < rows; r++) { if (edge(r * cols)) { rasterClip.push('왼쪽'); break; } }
   for (let r = 0; r < rows; r++) { if (edge(r * cols + cols - 1)) { rasterClip.push('오른쪽'); break; } }
+  rasterKey = key;
+  coverage = cov;
+  toneKey = '';
+  return cov;
+}
+
+/* image tool: the source picture, sampled per cell */
+let srcCanvas = null, srcName = '', srcEpoch = 0;
+let imgHex = null; // per cell: the picture's colour (posterised), for imgColor 'source'
+const SRC_KEY = 'askiical:image:src';
+const SRC_MAX = 2000; // longest side kept in memory
+function sampleSource() { // a lit sphere on a soft ground, until a picture is loaded
+  const c = document.createElement('canvas');
+  c.width = 800; c.height = 1000;
+  const x = c.getContext('2d');
+  const g = x.createLinearGradient(0, 0, 0, 1000);
+  g.addColorStop(0, '#f2efe6'); g.addColorStop(1, '#8a8780');
+  x.fillStyle = g; x.fillRect(0, 0, 800, 1000);
+  const r = x.createRadialGradient(330, 380, 20, 400, 480, 300);
+  r.addColorStop(0, '#ffffff'); r.addColorStop(0.35, '#e0603a'); r.addColorStop(1, '#2a0d08');
+  x.fillStyle = r; x.beginPath(); x.arc(400, 480, 280, 0, Math.PI * 2); x.fill();
+  x.fillStyle = 'rgba(0,0,0,0.35)'; x.beginPath(); x.ellipse(420, 800, 240, 40, 0, 0, Math.PI * 2); x.fill();
+  return c;
+}
+function source() {
+  if (!srcCanvas) { srcCanvas = sampleSource(); srcName = 'sample'; srcEpoch++; }
+  return srcCanvas;
+}
+// draw any image (img, bitmap, canvas) into a canvas no larger than SRC_MAX on its long side
+function toSourceCanvas(img) {
+  const w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
+  const k = Math.min(1, SRC_MAX / Math.max(w, h));
+  const c = document.createElement('canvas');
+  c.width = Math.max(1, Math.round(w * k)); c.height = Math.max(1, Math.round(h * k));
+  const x = c.getContext('2d');
+  x.imageSmoothingQuality = 'high';
+  x.drawImage(img, 0, 0, c.width, c.height);
+  return c;
+}
+function setSource(canvas, name, keep) {
+  srcCanvas = canvas; srcName = name; srcEpoch++;
+  rasterKey = '';
+  if (keep) { // remember the picture across reloads when it fits in storage
+    try {
+      let url = canvas.toDataURL('image/png');
+      if (url.length > 4e6) url = canvas.toDataURL('image/jpeg', 0.9);
+      localStorage.setItem(SRC_KEY, JSON.stringify({ name, url }));
+    } catch (e) { try { localStorage.removeItem(SRC_KEY); } catch (e2) { /* ignore */ } }
+  }
+  zoom = 1; view_.cx = 0.5; view_.cy = 0.5;
+  afterStructuralChange();
+}
+function loadStoredSource() {
+  try {
+    const v = JSON.parse(localStorage.getItem(SRC_KEY) || 'null');
+    if (!v || !v.url) return;
+    const img = new Image();
+    img.onload = () => setSource(toSourceCanvas(img), v.name, false);
+    img.src = v.url;
+  } catch (e) { /* keep the sample */ }
+}
+async function loadImageFile(f) {
+  if (!f || !/^image\//.test(f.type)) { toast('이미지 파일이 아닙니다.'); return; }
+  try {
+    const url = URL.createObjectURL(f);
+    const img = new Image();
+    await new Promise((ok, no) => { img.onload = ok; img.onerror = () => no(new Error('decode')); img.src = url; });
+    setSource(toSourceCanvas(img), f.name.replace(/\.[^.]+$/, ''), true);
+    URL.revokeObjectURL(url);
+    toast(`이미지 “${f.name}”을 불러왔습니다.`);
+  } catch (e) {
+    toast('이미지를 읽지 못했습니다.');
+  }
+}
+function onImageFile(e) { const f = e.target.files[0]; e.target.value = ''; loadImageFile(f); }
+
+// shrink in halves first so a big picture averages every pixel into its cell
+function downscale(src, w, h) {
+  let c = src;
+  while (c.width / 2 >= w * 2 && c.height / 2 >= h * 2) {
+    const n = document.createElement('canvas');
+    n.width = Math.round(c.width / 2); n.height = Math.round(c.height / 2);
+    const x = n.getContext('2d');
+    x.imageSmoothingQuality = 'high';
+    x.drawImage(c, 0, 0, n.width, n.height);
+    c = n;
+  }
+  const out = document.createElement('canvas');
+  out.width = w; out.height = h;
+  const x = out.getContext('2d', { willReadFrequently: true });
+  x.imageSmoothingQuality = 'high';
+  x.drawImage(c, 0, 0, w, h);
+  return x.getImageData(0, 0, w, h).data;
+}
+// coverage per cell from brightness: on a dark ground the light parts take ink, on a light ground the dark parts
+function rasterImage() {
+  styleMap = null;
+  rasterClip = [];
+  const { cols, rows } = dims();
+  const key = ['img', srcEpoch, cols, rows, state.imgTone, state.imgLo, state.imgHi, state.imgQuant, state.bg].join('|');
+  if (key === rasterKey && coverage) return coverage;
+  const d = downscale(source(), cols, rows);
+  const n = cols * rows;
+  const cov = new Float32Array(n);
+  const hex = new Array(n);
+  const light = state.imgTone === 'light' || (state.imgTone === 'auto' && Theme.lightness(state.bg) < 0.5);
+  const lo = state.imgLo, span = Math.max(0.01, state.imgHi - state.imgLo);
+  const q = Math.max(1, state.imgQuant - 1);
+  const post = (v) => Math.round(Math.round((v / 255) * q) * (255 / q));
+  for (let i = 0, p = 0; i < n; i++, p += 4) {
+    const a = d[p + 3] / 255;
+    const Y = AK.clamp(((0.299 * d[p] + 0.587 * d[p + 1] + 0.114 * d[p + 2]) / 255 - lo) / span);
+    cov[i] = (light ? Y : 1 - Y) * a; // transparent pixels stay empty
+    hex[i] = '#' + [post(d[p]), post(d[p + 1]), post(d[p + 2])].map((v) => v.toString(16).padStart(2, '0')).join('');
+  }
+  imgHex = hex;
   rasterKey = key;
   coverage = cov;
   toneKey = '';
@@ -583,6 +727,7 @@ function buildOps(frame) {
   const bgU = state.bgUnit ? state.units.find((u) => u.id === state.bgUnit) : null;
   const thr = state.threshold;
   const knock = state.renderMode === 'knockout';
+  const srcHex = isImg() && state.imgColor === 'source' ? imgHex : null; // the picture's own colours
   const ops = [];
   let custom = 0;
   for (let r = 0; r < rows; r++) {
@@ -602,7 +747,7 @@ function buildOps(frame) {
       const k = state.sizeMode === 'tone' && !knock ? Math.max(0.12, Math.round(Math.sqrt(tt) * 20) / 20) : 1;
       const isDay = sm && sm[r * cols + c] === 2;
       const th = isDay ? thD : thM;
-      const ink = th && th.applies(u) ? th.at(c, r, tt, u) : (isDay ? csD.fg : csM.fg);
+      const ink = srcHex ? srcHex[r * cols + c] : th && th.applies(u) ? th.at(c, r, tt, u) : (isDay ? csD.fg : csM.fg);
       ops.push({ c, r, u, k, a: 1, col: knock ? state.bg : ink, box: knock ? ink : null });
     }
   }
@@ -711,8 +856,8 @@ function renderOutputInfo() {
     `${o.cols} × ${o.rows} 셀 · <b>${fmtNum(o.Wpt, 2)} × ${fmtNum(o.Hpt, 2)} pt</b><br>` +
     `${fmtNum(o.Wpt * PT_MM)} × ${fmtNum(o.Hpt * PT_MM)} mm · PNG ${o.pxW.toLocaleString()} × ${o.pxH.toLocaleString()} px @ ${o.dpi} dpi` +
     (o.clamped ? `<br>PNG가 너무 커서 ${o.dpi} dpi로 낮춰 저장합니다.` : '') +
-    (!state.calOn && letterLayout().sizeRows ? `<br>글자 크기 ${state.letterScale}에 맞춰 세로 셀을 ${state.rowsFont}행에서 ${state.rowsFont + letterLayout().sizeRows}행으로 늘렸습니다.` : '') +
-    (!state.calOn && letterLayout().extraRows ? `<br>디센더가 아래 여백을 넘어서 아래로 ${letterLayout().extraRows}행을 늘렸습니다. 위쪽 가장자리와 기준선 위치는 다른 글자와 같습니다.` : '') +
+    (letterTool(state) && letterLayout().sizeRows ? `<br>글자 크기 ${state.letterScale}에 맞춰 세로 셀을 ${state.rowsFont}행에서 ${state.rowsFont + letterLayout().sizeRows}행으로 늘렸습니다.` : '') +
+    (letterTool(state) && letterLayout().extraRows ? `<br>디센더가 아래 여백을 넘어서 아래로 ${letterLayout().extraRows}행을 늘렸습니다. 위쪽 가장자리와 기준선 위치는 다른 글자와 같습니다.` : '') +
     (rasterClip.length ? `<br><span class="warn">글자가 ${rasterClip.join('·')}에서 잘립니다. 글자 크기를 줄이거나 여백을 늘리세요.</span>` : '');
 }
 
@@ -754,11 +899,11 @@ function renderNow() {
   const { cols, rows } = dims();
   const bgCount = lastOps.filter((o) => o.a < 1).length;
   renderOutputInfo();
-  const L = state.calOn ? {} : letterLayout();
+  const L = letterTool(state) ? letterLayout() : {};
   const clip = (L.sizeRows ? ` · 글자 크기에 맞춰 ${L.sizeRows}행 늘림` : '') + (L.extraRows ? ` · 디센더 때문에 아래로 ${L.extraRows}행 늘림` : '') + (rasterClip.length ? ` · ${rasterClip.join('·')} 잘림` : '');
   $('#info').classList.toggle('warn', rasterClip.length > 0);
   $('#info').title = rasterClip.length ? '글자가 아트보드 가장자리에 닿아 잘립니다. 글자 크기를 줄이거나 여백을 늘리세요.' : '';
-  $('#info').textContent = `${cols} × ${rows} 셀${clip} · ${fmtNum(cols * state.cellPt, 2)} pt · 유닛 ${(lastOps.length - bgCount).toLocaleString()} · 커스텀 글리프 ${lastOps.custom.toLocaleString()}`;
+  $('#info').textContent = `${isImg() ? `이미지 ${srcName} · ` : ''}${cols} × ${rows} 셀${clip} · ${fmtNum(cols * state.cellPt, 2)} pt · 유닛 ${(lastOps.length - bgCount).toLocaleString()} · 커스텀 글리프 ${lastOps.custom.toLocaleString()}`;
 }
 function requestRender() { if (!rafId) rafId = requestAnimationFrame(renderNow); }
 
@@ -838,7 +983,17 @@ const opt = (pairs) => pairs.map(([v, l]) => [v, l]);
 const themed = (s) => s.themeOn;
 const cal = (s) => s.calOn;
 const SECTIONS = [
-  { id: 'calendar', title: '달력', en: 'CALENDAR', items: [
+  { id: 'image', title: '이미지', en: 'IMAGE', tool: 'image', items: [
+    { id: 'img-file', t: 'file', label: '이미지 불러오기 (PNG · JPG · WEBP · SVG)', accept: 'image/*', onFile: onImageFile },
+    { id: 'img-note', t: 'note', text: '이미지를 미리보기에 끌어 놓거나 붙여넣어도 됩니다. 불러온 이미지는 이 브라우저에 기억합니다(JSON에는 들어가지 않습니다).' },
+    { k: 'imgCols', t: 'range', label: '가로 셀 수', min: 20, max: 400, step: 1 },
+    { k: 'imgTone', t: 'seg', label: '유닛을 채울 곳', options: () => opt([['auto', '배경 따라'], ['dark', '어두운 곳'], ['light', '밝은 곳']]) },
+    { k: 'imgLo', t: 'range', label: '검은 점 (이보다 어두우면 완전 검정)', min: 0, max: 0.95, step: 0.01 },
+    { k: 'imgHi', t: 'range', label: '흰 점 (이보다 밝으면 완전 흰색)', min: 0.05, max: 1, step: 0.01 },
+    { k: 'imgColor', t: 'seg', label: '유닛 색', options: () => opt([['theme', '색 섹션 설정'], ['source', '이미지 색']]) },
+    { k: 'imgQuant', t: 'range', label: '이미지 색 단계 (채널마다)', min: 2, max: 32, step: 1, when: (s) => s.imgColor === 'source' },
+  ] },
+  { id: 'calendar', title: '달력', en: 'CALENDAR', tool: 'letter', items: [
     { k: 'calOn', t: 'check', label: '달력 모드 · 한 장에 한 달' },
     { k: 'calPaper', t: 'select', label: '용지', when: cal, options: () => Calendar.PAPERS.map((p) => [p.id, p.label]) },
     { k: 'calOrient', t: 'seg', label: '방향', when: cal, options: () => opt([['portrait', '세로'], ['landscape', '가로']]) },
@@ -889,7 +1044,7 @@ const SECTIONS = [
     { id: 'cal-note', t: 'note', when: cal, text: '특별한 날은 달 이름과 같은 색 테마로 칠합니다. 색 섹션의 “편집할 색”으로 두 테마를 오가며 고치세요.' },
     { id: 'cal-export', t: 'buttons', when: cal, buttons: () => [['12달 SVG (ZIP)', () => exportYear('svg')], ['12달 PNG (ZIP)', () => exportYear('png')]] },
   ] },
-  { id: 'source', title: '글자', en: 'SOURCE', items: [
+  { id: 'source', title: '글자', en: 'SOURCE', tool: 'letter', items: [
     { k: 'char', t: 'text', label: '글자 (한 글자, 최대 4자)', when: (s) => !s.calOn },
     { k: 'font', t: 'select', label: '서체', options: () => LETTER_FONTS.map((f) => [f, f]) },
     { k: 'fitMode', t: 'seg', label: '글자 맞춤', when: (s) => !s.calOn, options: () => opt([['font', '서체 기준'], ['box', '개별 맞춤']]) },
@@ -918,11 +1073,11 @@ const SECTIONS = [
       when: (s) => themed(s) && (s.colorMode === 'random' || s.colorMode === 'noise' || s.colorSpread > 0) },
   ] },
   { id: 'grid', title: '그리드', en: 'GRID', items: [
-    { k: 'rowsFont', t: 'range', label: '세로 셀 수', min: 12, max: 200, step: 1, when: (s) => !s.calOn && s.fitMode === 'font' },
-    { k: 'padRows', t: 'range', label: '위아래 여백 (셀)', min: 0, max: 12, step: 1, when: (s) => !s.calOn && s.fitMode === 'font' },
-    { k: 'padCells', t: 'range', label: '좌우 여백 (셀)', min: 0, max: 12, step: 1, when: (s) => !s.calOn && s.fitMode === 'font' },
-    { k: 'cols', t: 'range', label: '가로 셀 수', min: 12, max: 200, step: 1, when: (s) => !s.calOn && s.fitMode !== 'font' },
-    { k: 'ratio', t: 'select', label: '아트보드 비율', when: (s) => !s.calOn && s.fitMode !== 'font', options: () => opt([['1:1', '1:1 정사각'], ['4:5', '4:5'], ['3:4', '3:4'], ['2:3', '2:3 포스터'], ['1:1.414', 'A 판형'], ['16:9', '16:9']]) },
+    { k: 'rowsFont', t: 'range', label: '세로 셀 수', min: 12, max: 200, step: 1, when: (s) => letterTool(s) && s.fitMode === 'font' },
+    { k: 'padRows', t: 'range', label: '위아래 여백 (셀)', min: 0, max: 12, step: 1, when: (s) => letterTool(s) && s.fitMode === 'font' },
+    { k: 'padCells', t: 'range', label: '좌우 여백 (셀)', min: 0, max: 12, step: 1, when: (s) => letterTool(s) && s.fitMode === 'font' },
+    { k: 'cols', t: 'range', label: '가로 셀 수', min: 12, max: 200, step: 1, when: (s) => letterTool(s) && s.fitMode !== 'font' },
+    { k: 'ratio', t: 'select', label: '아트보드 비율', when: (s) => letterTool(s) && s.fitMode !== 'font', options: () => opt([['1:1', '1:1 정사각'], ['4:5', '4:5'], ['3:4', '3:4'], ['2:3', '2:3 포스터'], ['1:1.414', 'A 판형'], ['16:9', '16:9']]) },
     { k: 'cellAspect', t: 'range', label: '셀 세로 비 (높이 ÷ 너비)', min: 0.6, max: 2.4, step: 0.05 },
     { k: 'grid', t: 'check', label: '격자선 그리기' },
     { k: 'gridColor', t: 'color', label: '격자선 색', when: (s) => s.grid },
@@ -997,6 +1152,7 @@ function buildSections(host, sections) {
   for (const sec of sections) {
     const el = document.createElement('details');
     el.className = 'ctl-sec';
+    sec.el = el;
     el.open = secOpen[sec.id] !== false;
     el.innerHTML = `<summary><h3><span>${sec.title}</span><em>${sec.en}</em></h3></summary><div class="ctl-body"></div>`;
     el.addEventListener('toggle', () => {
@@ -1110,6 +1266,7 @@ function syncControls() {
   uf.value = state.unitFont;
 }
 function syncVisibility() {
+  for (const sec of [...SECTIONS, ...UNIT_SECTIONS]) if (sec.el) sec.el.hidden = !!sec.tool && sec.tool !== TOOL;
   for (const it of ALL_ITEMS) if (it.when) it.row.hidden = !it.when(state);
 }
 
@@ -1209,7 +1366,7 @@ function drawPalBar() {
   lut.forEach((col, i) => { c.fillStyle = col; c.fillRect(Math.floor(i * w), 0, Math.ceil(w) + 1, cv.height); });
 }
 
-const LAYOUT_KEYS = new Set(['cols', 'ratio', 'cellAspect']);
+const LAYOUT_KEYS = new Set(['cols', 'ratio', 'cellAspect', 'imgCols']);
 const THEME_KEYS = new Set(['themeOn', 'colorBlend', 'colorScope', 'colorMode', 'bg', 'fg']);
 const CHAR_KEYS = new Set(['charAlign', 'charScale', 'charWeight', 'charDX', 'charDY']);
 function set(k, v) {
@@ -1595,7 +1752,8 @@ function applyPreset(p) {
   delete s.bgUnitGlyph;
   // presets describe a look; the print setup (fit mode, cell size, dpi) stays the user's
   s.fitMode = state.fitMode; s.cellPt = state.cellPt; s.dpi = state.dpi;
-  for (const k of Object.keys(SHAPE_DEFAULTS)) if (k.startsWith('cal')) s[k] = state[k];
+  for (const k of Object.keys(SHAPE_DEFAULTS)) if (k.startsWith('cal') || k.startsWith('img')) s[k] = state[k];
+  if (isImg()) for (const k of ['shade', 'shadeDepth', 'halo', 'edge', 'blur', 'invert']) s[k] = state[k]; // letter shading would bend the picture's tones
   s.colorTarget = state.colorTarget; s.altColors = state.altColors; // a preset restyles the colour set being edited
   if (!p.set.rowsFont) {
     const [rw, rh] = s.ratio.split(':').map(Number);
@@ -1630,7 +1788,7 @@ function download(name, blob) {
   setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 }
 const paperTag = () => `${state.calPaper}${state.calOrient === 'landscape' ? '-land' : ''}`;
-const baseName = () => state.calOn ? `askiical-${calKey()}-${paperTag()}` : 'askiical-' + (state.char || 'glyph').replace(/[^\p{L}\p{N}]/gu, '') + '-' + dims().cols + 'x' + dims().rows;
+const baseName = () => isImg() ? `askiical-img-${srcName.replace(/[^\p{L}\p{N}_-]/gu, '') || 'image'}-${dims().cols}x${dims().rows}` : state.calOn ? `askiical-${calKey()}-${paperTag()}` : 'askiical-' + (state.char || 'glyph').replace(/[^\p{L}\p{N}]/gu, '') + '-' + dims().cols + 'x' + dims().rows;
 
 // PNG pHYs chunk so Illustrator / Photoshop place the image at its physical size
 const CRC_TABLE = (() => {
@@ -1766,7 +1924,7 @@ $('#im-json').onchange = async (e) => {
     applyProject(JSON.parse(await f.text()));
     densityCache.clear(); rasterKey = '';
     persist();
-    toast(`${f.name}을 불러왔습니다.`);
+    toast(`${f.name}을 불러왔습니다.` + (isImg() && state.shade !== 'solid' ? ' 톤 섹션의 “안쪽 음영”이 글자용 설정이라 이미지 명암이 달라 보이면 “단색”으로 바꾸세요.' : ''));
   } catch (err) { toast(err.message || 'JSON을 읽지 못했습니다.'); }
 };
 
@@ -1779,9 +1937,48 @@ function toast(msg) {
   toastTimer = setTimeout(() => t.classList.remove('show'), 2600);
 }
 
+/* ---------- tool switch */
+const TOOL_SUB = { letter: 'ASCII 유닛으로 한 글자를 짓는 타이포그래피 시뮬레이터', image: '이미지를 ASCII 유닛으로 다시 그리는 도구' };
+function applyToolChrome() {
+  $('#tool-sub').textContent = TOOL_SUB[TOOL];
+  document.title = isImg() ? 'Askiical Image Lab' : 'Askiical Letter Lab';
+  for (const b of $('#tool-switch').querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.tool === TOOL));
+}
+function switchTool(t) {
+  if (t === TOOL) return;
+  clearTimeout(saveTimer);
+  try { localStorage.setItem(storeKey(), JSON.stringify(projectJSON())); } catch (e) { /* ignore */ }
+  TOOL = t;
+  try { history.replaceState(null, '', t === 'image' ? '?tool=image' : location.pathname); } catch (e) { /* file:// may refuse */ }
+  state = makeDefaultState();
+  carriedCalOn = false;
+  loadStored();
+  rasterKey = ''; layoutCache.key = ''; densityCache.clear();
+  zoom = 1; view_.cx = 0.5; view_.cy = 0.5;
+  applyToolChrome();
+  afterStructuralChange();
+}
+$('#tool-switch').onclick = (e) => { const b = e.target.closest('button'); if (b) switchTool(b.dataset.tool); };
+// image tool: drop or paste a picture onto the page
+stage.addEventListener('dragover', (e) => { if (!isImg()) return; e.preventDefault(); stage.classList.add('drop'); });
+stage.addEventListener('dragleave', () => stage.classList.remove('drop'));
+stage.addEventListener('drop', (e) => {
+  stage.classList.remove('drop');
+  if (!isImg()) return;
+  e.preventDefault();
+  loadImageFile(e.dataTransfer.files[0]);
+});
+window.addEventListener('paste', (e) => {
+  if (!isImg() || /^(INPUT|TEXTAREA)$/.test(document.activeElement.tagName)) return;
+  const f = [...(e.clipboardData || {}).files || []].find((x) => /^image\//.test(x.type));
+  if (f) { e.preventDefault(); loadImageFile(f); }
+});
+
 /* ---------- boot */
 window.addEventListener('resize', () => { renderRamp(); drawPalBar(); });
 buildControls();
 loadStored();
+loadStoredSource();
+applyToolChrome();
 afterStructuralChange();
 document.fonts.ready.then(() => { densityCache.clear(); rasterKey = ''; afterUnitsChange(); });
