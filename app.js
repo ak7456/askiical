@@ -1007,7 +1007,7 @@ const SECTIONS = [
     { k: 'calDayAlign', t: 'seg', label: '날짜 위치', when: cal, options: () => opt([['center', '칸 가운데'], ['left', '칸 왼쪽 위']]) },
     { k: 'calDaySize', t: 'range', label: '날짜 크기 (칸 높이 대비)', min: 0.2, max: 1, step: 0.01, when: cal },
     { k: 'calMargin', t: 'range', label: '바깥 여백 (셀)', min: 0, max: 30, step: 1, when: cal },
-    { k: 'calGap', t: 'range', label: '달 이름과 날짜 사이 (행)', min: 0, max: 30, step: 1, when: cal },
+    { k: 'calGap', t: 'range', label: '달 이름과 날짜 사이 (행)', min: -15, max: 30, step: 1, when: cal },
     { k: 'calMonthDY', t: 'range', label: '달 이름 세로 위치 (행)', min: -60, max: 60, step: 0.5, when: cal },
     { k: 'calGridDY', t: 'range', label: '날짜 표 세로 위치 (행)', min: -60, max: 60, step: 0.5, when: cal },
     { k: 'calLines', t: 'check', label: '각 주 위에 가로선', when: cal },
