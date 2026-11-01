@@ -29,9 +29,9 @@ const CHARSETS = [
 ];
 
 const SHAPE_DEFAULTS = {
-  char: 'A', font: 'Bodoni Moda', weight: 700, italic: false, letterScale: 1, offsetX: 0, offsetY: 0,
-  fitMode: 'font', rowsFont: 60, padCells: 1, padRows: 2,
-  cols: 72, ratio: '4:5', cellAspect: 1.5,
+  font: 'Bodoni Moda', weight: 700, italic: false, cellAspect: 1.5,
+  // text tool: up to two lines on a page, sized like the calendar's month name
+  txt: 'A', txtPaper: 'A4', txtOrient: 'portrait', txtSize: 0.6, txtLeading: 1, txtAlign: 'center', txtVAlign: 'middle', txtDY: 0, txtMargin: 6,
   cellPt: 6, dpi: '300',
   shade: 'distance', shadeDepth: 0.6, angle: 90, noiseScale: 7, blur: 3, halo: 0.15, edge: 0,
   gamma: 1, contrast: 0, threshold: 0.08, grain: 0.08, invert: false,
@@ -100,20 +100,38 @@ const PRESETS = [
 ];
 
 /* ---------- tools */
-// one page, two tools: the letter/calendar tool and the image tool. Each keeps its own saved state;
-// project JSON has the same format in both, so settings move freely between them.
-let TOOL = /[?&]tool=image\b/.test(location.search) || location.hash === '#image' ? 'image' : 'letter';
+// one page, three tools: text, calendar and image. Each keeps its own saved state;
+// project JSON has the same format in all of them, so settings move freely between them.
+const TOOLS = ['text', 'calendar', 'image'];
+const TOOL_KEY = 'askiical:tool';
+const LEGACY_KEY = 'askiical:v1'; // the letter/calendar tool's state before the split
+function initialTool() {
+  const m = /[?&]tool=(\w+)/.exec(location.search);
+  if (m && TOOLS.includes(m[1])) return m[1];
+  if (m && m[1] === 'letter') return 'text';
+  if (location.hash === '#image') return 'image';
+  try {
+    const t = localStorage.getItem(TOOL_KEY);
+    if (TOOLS.includes(t)) return t;
+    const old = JSON.parse(localStorage.getItem(LEGACY_KEY) || 'null');
+    if (old && old.calOn) return 'calendar';
+  } catch (e) { /* storage unavailable */ }
+  return 'text';
+}
+let TOOL = initialTool();
 const isImg = () => TOOL === 'image';
-const letterTool = (s) => !s.calOn && !isImg();
-// the image tool never shows a calendar, but keeps an imported calOn so the JSON goes back unchanged
+// calOn follows the tool; the image tool keeps an imported calOn so its JSON goes back unchanged
 let carriedCalOn = false;
 
 /* ---------- state */
-const storeKey = () => (isImg() ? 'askiical:image:v1' : 'askiical:v1');
+const storeKey = () => `askiical:${TOOL}:v1`;
 let state = makeDefaultState();
 
 function makeDefaultState() {
   const s = { ...SHAPE_DEFAULTS, glyphs: AK.BUILTIN_GLYPHS.map(AK.normGlyph), units: [] };
+  s.palette = SHAPE_DEFAULTS.palette.slice();
+  s.calOn = TOOL === 'calendar';
+  if (s.calOn) s.cellPt = 3; // a whole month needs small cells for the day numbers to read
   s.altColors = pickColors(SHAPE_DEFAULTS.altColors);
   s.calSpecial = {};
   s.units = [...' .:-=+*#%@'].map((c) => ({ id: AK.uid(), kind: 'char', value: c, on: true }));
@@ -124,7 +142,7 @@ function makeDefaultState() {
 
 function loadStored() {
   try {
-    const raw = localStorage.getItem(storeKey());
+    const raw = localStorage.getItem(storeKey()) ?? (isImg() ? null : localStorage.getItem(LEGACY_KEY));
     if (raw) applyProject(JSON.parse(raw), true);
   } catch (e) { /* storage unavailable or corrupt: keep defaults */ }
 }
@@ -138,7 +156,7 @@ function persist() {
 function projectJSON() {
   const out = { app: 'askiical', version: 1, tool: TOOL };
   for (const k of Object.keys(SHAPE_DEFAULTS)) out[k] = state[k];
-  if (isImg()) out.calOn = carriedCalOn;
+  out.calOn = isImg() ? carriedCalOn : TOOL === 'calendar';
   out.units = state.units;
   out.glyphs = state.glyphs;
   return out;
@@ -147,6 +165,8 @@ function applyProject(p, quiet) {
   if (!p || typeof p !== 'object' || !Array.isArray(p.units)) throw new Error('askiical 프로젝트 JSON이 아닙니다.');
   const s = { ...SHAPE_DEFAULTS };
   for (const k of Object.keys(SHAPE_DEFAULTS)) if (k in p && typeof p[k] === typeof SHAPE_DEFAULTS[k]) s[k] = p[k];
+  if (typeof p.txt !== 'string' && typeof p.char === 'string') s.txt = p.char; // single-letter projects from before the text tool
+  s.txt = s.txt.split('\n').slice(0, 2).join('\n');
   s.glyphs = (Array.isArray(p.glyphs) ? p.glyphs : []).map(AK.normGlyph);
   const ids = new Set(s.glyphs.map((g) => g.id));
   s.units = p.units
@@ -166,11 +186,12 @@ function applyProject(p, quiet) {
   s.calHol = Object.fromEntries(Object.entries(hl).filter(([k, v]) => /^\d{4}-\d{2}$/.test(k) && typeof v === 'string'));
   if (s.calMonth < 1 || s.calMonth > 12) s.calMonth = SHAPE_DEFAULTS.calMonth;
   if (!Calendar.PAPERS.some((pp) => pp.id === s.calPaper)) s.calPaper = 'A4';
+  if (!Calendar.PAPERS.some((pp) => pp.id === s.txtPaper)) s.txtPaper = 'A4';
   if (!['month', 'day'].includes(s.colorTarget)) s.colorTarget = 'month';
-  if (isImg()) {
-    carriedCalOn = s.calOn;
-    s.calOn = false;
-    if (s.colorTarget === 'day') { // show the month-name colours, as the letter tool does outside calendar mode
+  carriedCalOn = s.calOn;
+  s.calOn = TOOL === 'calendar';
+  if (!s.calOn) {
+    if (s.colorTarget === 'day') { // outside the calendar the month-name colour set is the one in use
       const day = pickColors(s);
       Object.assign(s, pickColors(s.altColors));
       s.altColors = day;
@@ -192,54 +213,17 @@ function compiled(g) {
   return cg;
 }
 
-/* Grid layout.
-   box  — the letter's ink box is fitted into a fixed artboard (cols × ratio); every letter gets its own type size.
-   font — type size comes from the font's ascent + descent filling the artboard height (rows), the baseline sits
-          on the same row for every letter, and the column count follows the letter's advance width.
-          Letters made with the same font and settings therefore line up when placed side by side.
-   Lengths below are in cell widths (a cell is 1 wide and cellAspect tall). */
+/* Page layout. Lengths are in cell widths (a cell is 1 wide and cellAspect tall).
+   The text and calendar tools lay their type out on a paper-sized grid (calendar.js); the image tool samples a picture. */
 const lctx = document.createElement('canvas').getContext('2d');
-const VREF = 'HÅÉbdfhklgjpqyÿ()[]{}|';
-let layoutCache = { key: '', v: null };
+const VREF = 'HÅÉbdfhklgjpqyÿ()[]{}|'; // tall and deep reference glyphs: the font box covers their ink
 let fontEpoch = 0; // bumps when a web font finishes loading, so metrics are re-measured
-function letterLayout() {
-  const key = [state.fitMode, state.char, state.font, state.weight, state.italic, state.letterScale, state.rowsFont,
-    state.padCells, state.padRows, state.cellAspect, state.cols, state.ratio, fontEpoch].join('|');
-  if (layoutCache.key === key) return layoutCache.v;
-  let v;
-  if (state.fitMode !== 'font') {
-    const [rw, rh] = state.ratio.split(':').map(Number);
-    v = { mode: 'box', cols: state.cols, rows: Math.max(4, Math.round((state.cols * rh) / rw / state.cellAspect)) };
-  } else {
-    const rows = state.rowsFont, H = rows * state.cellAspect;
-    const pad = Math.min(state.padRows, Math.floor((rows - 4) / 2)) * state.cellAspect;
-    lctx.font = letterFontSpec(1000); // large size: canvas metrics come back rounded to whole pixels
-    const m = lctx.measureText(state.char || ' ');
-    // vertical box: the larger of the font's declared ascent/descent and the ink of tall/deep reference glyphs.
-    // It never depends on the current letter, so every letter of the font gets the same size and baseline.
-    const ref = lctx.measureText(VREF);
-    const A = Math.max(m.fontBoundingBoxAscent ?? 800, ref.actualBoundingBoxAscent) / 1000;
-    const D = Math.max(m.fontBoundingBoxDescent ?? 200, ref.actualBoundingBoxDescent) / 1000;
-    const Hbox = H - 2 * pad;
-    const f = (Hbox * state.letterScale) / (A + D); // type size in cell widths
-    const left = Math.min(0, -m.actualBoundingBoxLeft / 1000), right = Math.max(m.width / 1000, m.actualBoundingBoxRight / 1000);
-    const span = (right - left) * f;
-    const cols = Math.max(4, Math.ceil(span - 1e-6) + 2 * state.padCells);
-    // above size 1 the font box outgrows the base height: add rows so it fits with its margins.
-    // This depends only on the font and settings, so all letters made with them still share height and baseline.
-    const rowsFit = Math.max(rows, Math.ceil((Hbox * state.letterScale + 2 * pad) / state.cellAspect - 1e-6));
-    const H2 = rowsFit * state.cellAspect;
-    const baseline = pad + (H2 - 2 * pad - (A + D) * f) / 2 + A * f;
-    const offY = state.offsetY * H; // vertical offset is measured against the base height, so extra rows don't move it
-    // a letter whose ink would pass the bottom margin gets extra rows below; the top edge and baseline row stay put
-    const inkBottom = baseline + offY + (m.actualBoundingBoxDescent / 1000) * f;
-    const below = Math.max(pad, state.cellAspect); // keep at least one empty row under the descender
-    const extraRows = Math.max(0, Math.ceil((inkBottom + below - H2) / state.cellAspect - 1e-6));
-    v = { mode: 'font', cols, rows: rowsFit + extraRows, sizeRows: rowsFit - rows, extraRows, f,
-      originX: (cols - span) / 2 - left * f, baseline, offY };
-  }
-  layoutCache = { key, v };
-  return v;
+let textCache = { key: '', v: null };
+function textLayout() {
+  const key = ['txt', 'txtPaper', 'txtOrient', 'txtSize', 'txtLeading', 'txtAlign', 'txtVAlign', 'txtDY', 'txtMargin',
+    'font', 'weight', 'italic', 'cellPt', 'cellAspect'].map((k) => state[k]).join('|') + '|' + fontEpoch;
+  if (textCache.key !== key) textCache = { key, v: Calendar.textLayout(state, calMeasure()) };
+  return textCache.v;
 }
 function dims() {
   if (isImg()) {
@@ -247,8 +231,7 @@ function dims() {
     return { cols: state.imgCols, rows: Math.max(4, Math.round((state.imgCols * src.height) / src.width / state.cellAspect)) };
   }
   if (state.calOn) return Calendar.grid(state);
-  const l = letterLayout();
-  return { cols: l.cols, rows: l.rows };
+  return Calendar.grid(state, state.txtPaper, state.txtOrient);
 }
 const letterFontSpec = (px) => `${state.italic ? 'italic ' : ''}${state.weight} ${px}px "${state.font}", serif`;
 const unitFontSpec = (px) => `${px}px "${state.unitFont}", ui-monospace, monospace`;
@@ -363,44 +346,26 @@ function rasterCalendar() {
 function raster() {
   if (isImg()) return rasterImage();
   if (state.calOn) return rasterCalendar();
+  return rasterText();
+}
+function rasterText() {
   styleMap = null;
-  const { cols, rows } = dims();
-  const L = letterLayout();
-  const key = [state.fitMode, state.char, state.font, state.weight, state.italic, state.letterScale, state.offsetX, state.offsetY, cols, rows, state.cellAspect, L.f, fontEpoch].join('|');
+  const lay = textLayout();
+  const { cols, rows } = lay;
+  const key = 'text|' + textCache.key;
   if (key === rasterKey && coverage) return coverage;
-  ensureFont(letterFontSpec(100), state.char || 'A');
+  ensureFont(letterFontSpec(100), state.txt || 'A');
   const W = cols * SS, H = Math.max(rows, Math.round(rows * state.cellAspect * SS));
   rc.width = W; rc.height = H;
+  const sy = H / (rows * state.cellAspect);
   rctx.clearRect(0, 0, W, H);
-  const cov = new Float32Array(cols * rows);
-  const text = state.char;
-  if (text) {
-    rctx.textAlign = 'left';
-    rctx.textBaseline = 'alphabetic';
-    rctx.font = letterFontSpec(200);
-    const m = rctx.measureText(text);
-    const bw = m.actualBoundingBoxLeft + m.actualBoundingBoxRight;
-    const bh = m.actualBoundingBoxAscent + m.actualBoundingBoxDescent;
-    if (bw > 0 && bh > 0) {
-      let x, y;
-      if (L.mode === 'font') {
-        const sy = H / (rows * state.cellAspect); // raster px per cell width, vertically
-        rctx.font = letterFontSpec(L.f * SS);
-        x = (L.originX + state.offsetX * cols) * SS;
-        y = (L.baseline + L.offY) * sy;
-      } else {
-        const fit = Math.min((W * 0.84) / bw, (H * 0.84) / bh) * state.letterScale;
-        rctx.font = letterFontSpec(200 * fit);
-        const m2 = rctx.measureText(text);
-        x = W / 2 - (m2.actualBoundingBoxRight - m2.actualBoundingBoxLeft) / 2 + state.offsetX * W;
-        y = H / 2 + (m2.actualBoundingBoxAscent - m2.actualBoundingBoxDescent) / 2 + state.offsetY * H;
-      }
-      rctx.fillStyle = '#000';
-      rctx.fillText(text, x, y);
-      cov.set(cellCoverage(W, H, cols, rows));
-    }
+  rctx.fillStyle = '#000'; rctx.textAlign = 'left'; rctx.textBaseline = 'alphabetic';
+  for (const b of lay.blocks) {
+    rctx.font = letterFontSpec(b.size * SS);
+    rctx.fillText(b.text, b.x * SS, b.y * sy);
   }
-  // which artboard edges the letter's ink reaches (a sign it is being cut off)
+  const cov = cellCoverage(W, H, cols, rows);
+  // which page edges the ink reaches (a sign it is being cut off)
   rasterClip = [];
   const edge = (i) => cov[i] > 0.04;
   for (let c = 0; c < cols; c++) { if (edge(c)) { rasterClip.push('위'); break; } }
@@ -851,14 +816,14 @@ function renderOutputInfo() {
   const el = document.getElementById('out-info');
   if (!el) return;
   const o = outputSize();
-  const pg = state.calOn ? Calendar.paper(state.calPaper, state.calOrient) : null;
-  el.innerHTML = (pg ? `용지 ${pg.paper.id.replace('iso', ' ISO')} ${state.calOrient === 'landscape' ? '가로' : '세로'} (${fmtNum(pg.w * PT_MM)} × ${fmtNum(pg.h * PT_MM)} mm)에 맞춘 격자<br>` : '') +
+  const [pid, orient] = pageOf();
+  const pg = pid ? Calendar.paper(pid, orient) : null;
+  el.innerHTML = (pg ? `용지 ${pg.paper.id} ${orient === 'landscape' ? '가로' : '세로'} (${fmtNum(pg.w * PT_MM)} × ${fmtNum(pg.h * PT_MM)} mm)에 맞춘 격자<br>` : '') +
     `${o.cols} × ${o.rows} 셀 · <b>${fmtNum(o.Wpt, 2)} × ${fmtNum(o.Hpt, 2)} pt</b><br>` +
     `${fmtNum(o.Wpt * PT_MM)} × ${fmtNum(o.Hpt * PT_MM)} mm · PNG ${o.pxW.toLocaleString()} × ${o.pxH.toLocaleString()} px @ ${o.dpi} dpi` +
     (o.clamped ? `<br>PNG가 너무 커서 ${o.dpi} dpi로 낮춰 저장합니다.` : '') +
-    (letterTool(state) && letterLayout().sizeRows ? `<br>글자 크기 ${state.letterScale}에 맞춰 세로 셀을 ${state.rowsFont}행에서 ${state.rowsFont + letterLayout().sizeRows}행으로 늘렸습니다.` : '') +
-    (letterTool(state) && letterLayout().extraRows ? `<br>디센더가 아래 여백을 넘어서 아래로 ${letterLayout().extraRows}행을 늘렸습니다. 위쪽 가장자리와 기준선 위치는 다른 글자와 같습니다.` : '') +
-    (rasterClip.length ? `<br><span class="warn">글자가 ${rasterClip.join('·')}에서 잘립니다. 글자 크기를 줄이거나 여백을 늘리세요.</span>` : '');
+    (TOOL === 'text' && textLayout().fitWidth ? '<br>가장 긴 줄이 좌우 여백에 닿아서 글자를 영역 높이보다 작게 맞췄습니다.' : '') +
+    (rasterClip.length ? `<br><span class="warn">글자가 ${rasterClip.join('·')}에서 잘립니다. 글자 영역 높이나 세로 위치를 조절하세요.</span>` : '');
 }
 
 function artSize() {
@@ -899,10 +864,9 @@ function renderNow() {
   const { cols, rows } = dims();
   const bgCount = lastOps.filter((o) => o.a < 1).length;
   renderOutputInfo();
-  const L = letterTool(state) ? letterLayout() : {};
-  const clip = (L.sizeRows ? ` · 글자 크기에 맞춰 ${L.sizeRows}행 늘림` : '') + (L.extraRows ? ` · 디센더 때문에 아래로 ${L.extraRows}행 늘림` : '') + (rasterClip.length ? ` · ${rasterClip.join('·')} 잘림` : '');
+  const clip = rasterClip.length ? ` · ${rasterClip.join('·')} 잘림` : '';
   $('#info').classList.toggle('warn', rasterClip.length > 0);
-  $('#info').title = rasterClip.length ? '글자가 아트보드 가장자리에 닿아 잘립니다. 글자 크기를 줄이거나 여백을 늘리세요.' : '';
+  $('#info').title = rasterClip.length ? '글자가 용지 가장자리에 닿아 잘립니다. 글자 영역 높이나 세로 위치를 조절하세요.' : '';
   $('#info').textContent = `${isImg() ? `이미지 ${srcName} · ` : ''}${cols} × ${rows} 셀${clip} · ${fmtNum(cols * state.cellPt, 2)} pt · 유닛 ${(lastOps.length - bgCount).toLocaleString()} · 커스텀 글리프 ${lastOps.custom.toLocaleString()}`;
 }
 function requestRender() { if (!rafId) rafId = requestAnimationFrame(renderNow); }
@@ -993,8 +957,18 @@ const SECTIONS = [
     { k: 'imgColor', t: 'seg', label: '유닛 색', options: () => opt([['theme', '색 섹션 설정'], ['source', '이미지 색']]) },
     { k: 'imgQuant', t: 'range', label: '이미지 색 단계 (채널마다)', min: 2, max: 32, step: 1, when: (s) => s.imgColor === 'source' },
   ] },
-  { id: 'calendar', title: '달력', en: 'CALENDAR', tool: 'letter', items: [
-    { k: 'calOn', t: 'check', label: '달력 모드 · 한 장에 한 달' },
+  { id: 'text', title: '글자', en: 'TEXT', tool: 'text', items: [
+    { k: 'txt', t: 'area', label: '텍스트 (최대 2줄)', lines: 2 },
+    { k: 'txtPaper', t: 'select', label: '용지', options: () => Calendar.PAPERS.map((p) => [p.id, p.label]) },
+    { k: 'txtOrient', t: 'seg', label: '방향', options: () => opt([['portrait', '세로'], ['landscape', '가로']]) },
+    { k: 'txtSize', t: 'range', label: '글자 영역 높이 (용지 대비)', min: 0.05, max: 1, step: 0.01 },
+    { k: 'txtLeading', t: 'range', label: '행간 (서체 높이 대비)', min: 0.5, max: 2, step: 0.01, when: (s) => s.txt.includes('\n') },
+    { k: 'txtAlign', t: 'seg', label: '정렬', options: () => opt([['left', '왼쪽'], ['center', '가운데'], ['right', '오른쪽']]) },
+    { k: 'txtVAlign', t: 'seg', label: '영역 위치', options: () => opt([['top', '위'], ['middle', '가운데'], ['bottom', '아래']]) },
+    { k: 'txtDY', t: 'range', label: '세로 위치 (행)', min: -60, max: 60, step: 0.5 },
+    { k: 'txtMargin', t: 'range', label: '바깥 여백 (셀)', min: 0, max: 30, step: 1 },
+  ] },
+  { id: 'calendar', title: '달력', en: 'CALENDAR', tool: 'calendar', items: [
     { k: 'calPaper', t: 'select', label: '용지', when: cal, options: () => Calendar.PAPERS.map((p) => [p.id, p.label]) },
     { k: 'calOrient', t: 'seg', label: '방향', when: cal, options: () => opt([['portrait', '세로'], ['landscape', '가로']]) },
     { k: 'calYear', t: 'number', label: '연도', min: 1900, max: 2100, step: 1, when: cal },
@@ -1044,15 +1018,10 @@ const SECTIONS = [
     { id: 'cal-note', t: 'note', when: cal, text: '특별한 날은 달 이름과 같은 색 테마로 칠합니다. 색 섹션의 “편집할 색”으로 두 테마를 오가며 고치세요.' },
     { id: 'cal-export', t: 'buttons', when: cal, buttons: () => [['12달 SVG (ZIP)', () => exportYear('svg')], ['12달 PNG (ZIP)', () => exportYear('png')]] },
   ] },
-  { id: 'source', title: '글자', en: 'SOURCE', tool: 'letter', items: [
-    { k: 'char', t: 'text', label: '글자 (한 글자, 최대 4자)', when: (s) => !s.calOn },
+  { id: 'source', title: '서체', en: 'TYPEFACE', tool: ['text', 'calendar'], items: [
     { k: 'font', t: 'select', label: '서체', options: () => LETTER_FONTS.map((f) => [f, f]) },
-    { k: 'fitMode', t: 'seg', label: '글자 맞춤', when: (s) => !s.calOn, options: () => opt([['font', '서체 기준'], ['box', '개별 맞춤']]) },
     { k: 'weight', t: 'range', label: '굵기', min: 100, max: 900, step: 100 },
     { k: 'italic', t: 'check', label: '이탤릭' },
-    { k: 'letterScale', t: 'range', label: '글자 크기', min: 0.3, max: 1.8, step: 0.01, when: (s) => !s.calOn },
-    { k: 'offsetX', t: 'range', label: '가로 위치', min: -0.5, max: 0.5, step: 0.01, when: (s) => !s.calOn },
-    { k: 'offsetY', t: 'range', label: '세로 위치', min: -0.5, max: 0.5, step: 0.01, when: (s) => !s.calOn },
     { id: 'font-file', t: 'file', label: '서체 파일 올리기 (.ttf .otf .woff2)', accept: '.ttf,.otf,.woff,.woff2' },
   ] },
   { id: 'color', title: '색', en: 'COLOR', items: [
@@ -1073,11 +1042,6 @@ const SECTIONS = [
       when: (s) => themed(s) && (s.colorMode === 'random' || s.colorMode === 'noise' || s.colorSpread > 0) },
   ] },
   { id: 'grid', title: '그리드', en: 'GRID', items: [
-    { k: 'rowsFont', t: 'range', label: '세로 셀 수', min: 12, max: 200, step: 1, when: (s) => letterTool(s) && s.fitMode === 'font' },
-    { k: 'padRows', t: 'range', label: '위아래 여백 (셀)', min: 0, max: 12, step: 1, when: (s) => letterTool(s) && s.fitMode === 'font' },
-    { k: 'padCells', t: 'range', label: '좌우 여백 (셀)', min: 0, max: 12, step: 1, when: (s) => letterTool(s) && s.fitMode === 'font' },
-    { k: 'cols', t: 'range', label: '가로 셀 수', min: 12, max: 200, step: 1, when: (s) => letterTool(s) && s.fitMode !== 'font' },
-    { k: 'ratio', t: 'select', label: '아트보드 비율', when: (s) => letterTool(s) && s.fitMode !== 'font', options: () => opt([['1:1', '1:1 정사각'], ['4:5', '4:5'], ['3:4', '3:4'], ['2:3', '2:3 포스터'], ['1:1.414', 'A 판형'], ['16:9', '16:9']]) },
     { k: 'cellAspect', t: 'range', label: '셀 세로 비 (높이 ÷ 너비)', min: 0.6, max: 2.4, step: 0.05 },
     { k: 'grid', t: 'check', label: '격자선 그리기' },
     { k: 'gridColor', t: 'color', label: '격자선 색', when: (s) => s.grid },
@@ -1214,6 +1178,17 @@ function buildSections(host, sections) {
           else it.input.setAttribute('aria-invalid', 'true');
         });
         it.input.addEventListener('change', () => { it.input.value = state[it.k]; it.input.removeAttribute('aria-invalid'); });
+      } else if (it.t === 'area') {
+        row.innerHTML = `<label for="${id}">${it.label}</label><textarea id="${id}" rows="${it.lines}" autocomplete="off" spellcheck="false"></textarea>`;
+        it.input = row.querySelector('textarea');
+        it.input.addEventListener('keydown', (e) => { // no line past the limit
+          if (e.key === 'Enter' && it.input.value.split('\n').length >= it.lines) e.preventDefault();
+        });
+        it.input.addEventListener('input', () => {
+          const v = it.input.value.split('\n').slice(0, it.lines).join('\n');
+          if (v !== it.input.value) it.input.value = v;
+          set(it.k, v);
+        });
       } else if (it.t === 'line') {
         row.className = 'ctl ctl-text-line';
         row.innerHTML = `<label for="${id}">${it.label}</label><input type="text" id="${id}" autocomplete="off">`;
@@ -1266,7 +1241,7 @@ function syncControls() {
   uf.value = state.unitFont;
 }
 function syncVisibility() {
-  for (const sec of [...SECTIONS, ...UNIT_SECTIONS]) if (sec.el) sec.el.hidden = !!sec.tool && sec.tool !== TOOL;
+  for (const sec of [...SECTIONS, ...UNIT_SECTIONS]) if (sec.el) sec.el.hidden = !!sec.tool && ![].concat(sec.tool).includes(TOOL);
   for (const it of ALL_ITEMS) if (it.when) it.row.hidden = !it.when(state);
 }
 
@@ -1366,20 +1341,13 @@ function drawPalBar() {
   lut.forEach((col, i) => { c.fillStyle = col; c.fillRect(Math.floor(i * w), 0, Math.ceil(w) + 1, cv.height); });
 }
 
-const LAYOUT_KEYS = new Set(['cols', 'ratio', 'cellAspect', 'imgCols']);
+const LAYOUT_KEYS = new Set(['cellAspect', 'imgCols']);
 const THEME_KEYS = new Set(['themeOn', 'colorBlend', 'colorScope', 'colorMode', 'bg', 'fg']);
 const CHAR_KEYS = new Set(['charAlign', 'charScale', 'charWeight', 'charDX', 'charDY']);
 function set(k, v) {
   if (typeof SHAPE_DEFAULTS[k] === 'number' && typeof v === 'string') v = +v; // selects hand back strings
   if (k === 'colorTarget') { switchColorTarget(v); return; }
   state[k] = v;
-  if (k === 'calOn') { zoom = 1; view_.cx = 0.5; view_.cy = 0.5; } // a different artboard: start from the whole view
-  if (k === 'calOn' && !v && state.colorTarget !== 'month') switchColorTarget('month'); // letter mode edits the month set
-  if (k === 'calOn' && v && state.cellPt > 4) { // a whole A4 month needs small cells for the day numbers to read
-    state.cellPt = 3;
-    syncControls();
-    toast('달력의 작은 날짜가 읽히도록 셀 너비를 3pt로 바꿨습니다. 출력 섹션에서 조절할 수 있습니다.');
-  }
   if (k === 'calMonth' || k === 'calYear' || k === 'calMonthPalette') applyMonthPalette();
   if (k === 'calMonth' || k === 'calYear' || k === 'calMonthPalette') syncControls(); // month label examples and special days follow the month
   if (k === 'cellAspect') densityCache.clear();
@@ -1748,17 +1716,14 @@ function applyPreset(p) {
       if (b) keepGlyphs.push(AK.normGlyph(b));
     }
   }
-  const s = { ...SHAPE_DEFAULTS, ...p.set };
-  delete s.bgUnitGlyph;
-  // presets describe a look; the print setup (fit mode, cell size, dpi) stays the user's
-  s.fitMode = state.fitMode; s.cellPt = state.cellPt; s.dpi = state.dpi;
-  for (const k of Object.keys(SHAPE_DEFAULTS)) if (k.startsWith('cal') || k.startsWith('img')) s[k] = state[k];
+  const s = { ...SHAPE_DEFAULTS };
+  for (const [k, v] of Object.entries(p.set)) if (k in SHAPE_DEFAULTS) s[k] = Array.isArray(v) ? v.slice() : v;
+  s.palette = s.palette.slice();
+  // presets describe a look; the print setup (cell size, dpi) and each tool's own content stay the user's
+  s.cellPt = state.cellPt; s.dpi = state.dpi; s.calOn = state.calOn;
+  for (const k of Object.keys(SHAPE_DEFAULTS)) if (/^(cal|img|txt)/.test(k)) s[k] = state[k];
   if (isImg()) for (const k of ['shade', 'shadeDepth', 'halo', 'edge', 'blur', 'invert']) s[k] = state[k]; // letter shading would bend the picture's tones
   s.colorTarget = state.colorTarget; s.altColors = state.altColors; // a preset restyles the colour set being edited
-  if (!p.set.rowsFont) {
-    const [rw, rh] = s.ratio.split(':').map(Number);
-    s.rowsFont = Math.max(12, Math.round((s.cols * rh) / rw / s.cellAspect));
-  }
   s.glyphs = keepGlyphs;
   s.units = [...new Set([...p.units])].map((c) => ({ id: AK.uid(), kind: 'char', value: c, on: true }))
     .concat(p.glyphs.map((id) => ({ id: AK.uid(), kind: 'glyph', glyph: id, on: true })));
@@ -1787,8 +1752,11 @@ function download(name, blob) {
   a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 }
-const paperTag = () => `${state.calPaper}${state.calOrient === 'landscape' ? '-land' : ''}`;
-const baseName = () => isImg() ? `askiical-img-${srcName.replace(/[^\p{L}\p{N}_-]/gu, '') || 'image'}-${dims().cols}x${dims().rows}` : state.calOn ? `askiical-${calKey()}-${paperTag()}` : 'askiical-' + (state.char || 'glyph').replace(/[^\p{L}\p{N}]/gu, '') + '-' + dims().cols + 'x' + dims().rows;
+// the page the current tool lays out on: [paper id, orientation], or [] for the image tool
+const pageOf = () => (isImg() ? [] : state.calOn ? [state.calPaper, state.calOrient] : [state.txtPaper, state.txtOrient]);
+const paperTag = () => { const [p, o] = pageOf(); return `${p}${o === 'landscape' ? '-land' : ''}`; };
+const baseName = () => isImg() ? `askiical-img-${srcName.replace(/[^\p{L}\p{N}_-]/gu, '') || 'image'}-${dims().cols}x${dims().rows}` : state.calOn ? `askiical-${calKey()}-${paperTag()}`
+  : `askiical-${state.txt.replace(/\s+/g, '_').replace(/[^\p{L}\p{N}_]/gu, '').slice(0, 24) || 'text'}-${paperTag()}`;
 
 // PNG pHYs chunk so Illustrator / Photoshop place the image at its physical size
 const CRC_TABLE = (() => {
@@ -1938,10 +1906,11 @@ function toast(msg) {
 }
 
 /* ---------- tool switch */
-const TOOL_SUB = { letter: 'ASCII 유닛으로 한 글자를 짓는 타이포그래피 시뮬레이터', image: '이미지를 ASCII 유닛으로 다시 그리는 도구' };
+const TOOL_SUB = { text: 'ASCII 유닛으로 글자를 짓는 타이포그래피 시뮬레이터', calendar: 'ASCII 유닛으로 한 달을 한 장에 짓는 달력', image: '이미지를 ASCII 유닛으로 다시 그리는 도구' };
+const TOOL_TITLE = { text: 'Askiical Letter Lab', calendar: 'Askiical Calendar Lab', image: 'Askiical Image Lab' };
 function applyToolChrome() {
   $('#tool-sub').textContent = TOOL_SUB[TOOL];
-  document.title = isImg() ? 'Askiical Image Lab' : 'Askiical Letter Lab';
+  document.title = TOOL_TITLE[TOOL];
   for (const b of $('#tool-switch').querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.tool === TOOL));
 }
 function switchTool(t) {
@@ -1949,11 +1918,12 @@ function switchTool(t) {
   clearTimeout(saveTimer);
   try { localStorage.setItem(storeKey(), JSON.stringify(projectJSON())); } catch (e) { /* ignore */ }
   TOOL = t;
-  try { history.replaceState(null, '', t === 'image' ? '?tool=image' : location.pathname); } catch (e) { /* file:// may refuse */ }
+  try { localStorage.setItem(TOOL_KEY, t); } catch (e) { /* ignore */ }
+  try { history.replaceState(null, '', `?tool=${t}`); } catch (e) { /* file:// may refuse */ }
   state = makeDefaultState();
   carriedCalOn = false;
   loadStored();
-  rasterKey = ''; layoutCache.key = ''; densityCache.clear();
+  rasterKey = ''; densityCache.clear();
   zoom = 1; view_.cx = 0.5; view_.cy = 0.5;
   applyToolChrome();
   afterStructuralChange();

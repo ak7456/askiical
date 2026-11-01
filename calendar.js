@@ -39,9 +39,9 @@ const Calendar = (() => {
     }
   }
 
-  // page grid for the cell size: as close to the paper as whole cells allow
-  function grid(s) {
-    const pg = paper(s.calPaper, s.calOrient);
+  // page grid for the cell size: as close to the paper as whole cells allow (calendar paper unless one is given)
+  function grid(s, id = s.calPaper, orient = s.calOrient) {
+    const pg = paper(id, orient);
     return {
       cols: Math.max(20, Math.round(pg.w / s.cellPt)),
       rows: Math.max(20, Math.round(pg.h / (s.cellPt * s.cellAspect))),
@@ -144,6 +144,38 @@ const Calendar = (() => {
     return { cols, rows, blocks, lines, labels, weeks, days };
   }
 
+  /* textLayout(s, measure) → { cols, rows, blocks, fitWidth } for the text tool: up to two lines on the page.
+     Sizing works like the month name: the text band is txtSize of the content height and the type's font box
+     fills it, with lines txtLeading font boxes apart; if the widest line would pass the margins the type shrinks. */
+  function textLayout(s, measure) {
+    const { cols, rows } = grid(s, s.txtPaper, s.txtOrient);
+    const W = cols, H = rows * s.cellAspect;
+    const mg = s.txtMargin;
+    const contentW = W - 2 * mg, contentH = H - 2 * mg;
+    const lines = String(s.txt || '').split('\n').slice(0, 2);
+    if (lines.length > 1 && !lines[1].trim()) lines.pop(); // a trailing empty line is not a second line
+    const box = measure.box(), fb = box.asc + box.desc;
+    const n = lines.length, lead = s.txtLeading;
+    const bandH = contentH * s.txtSize;
+    const span = 1 + (n - 1) * lead; // block height in font boxes
+    let f = bandH / (fb * span);
+    const ms = lines.map((t) => measure(t || ' '));
+    const inkW = Math.max(...ms.map((q) => q.right + q.left));
+    const fitWidth = inkW * f > contentW;
+    if (fitWidth) f = contentW / inkW;
+    const blockH = fb * f * span;
+    const bandTop = mg + (contentH - bandH) * ({ top: 0, middle: 0.5, bottom: 1 }[s.txtVAlign] ?? 0.5) + (s.txtDY || 0) * s.cellAspect;
+    const base0 = bandTop + (bandH - blockH) / 2 + box.asc * f;
+    const blocks = lines.map((text, i) => {
+      const q = ms[i];
+      const x = s.txtAlign === 'left' ? mg + q.left * f
+        : s.txtAlign === 'right' ? W - mg - q.right * f
+          : W / 2 - ((q.right - q.left) / 2) * f;
+      return { text, x, y: base0 + i * lead * fb * f, size: f, style: 'month' };
+    });
+    return { cols, rows, blocks, fitWidth };
+  }
+
   /* minimal ZIP writer (deflate via CompressionStream when available, otherwise stored) */
   const CRC = (() => {
     const t = new Uint32Array(256);
@@ -194,5 +226,5 @@ const Calendar = (() => {
     return new Blob([...local, ...central, new Uint8Array(end.buffer)], { type: 'application/zip' });
   }
 
-  return { PAPERS, paper, MONTHS, LABELS, monthLabel, grid, parseDays, parseHolidays, layout, zip };
+  return { PAPERS, paper, MONTHS, LABELS, monthLabel, grid, parseDays, parseHolidays, layout, textLayout, zip };
 })();
