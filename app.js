@@ -46,7 +46,7 @@ const SHAPE_DEFAULTS = {
   charAlign: 'cap', charScale: 1, charWeight: 0, charDX: 0, charDY: 0,
   // calendar mode: one month on an A4 portrait page
   calOn: false, calPaper: 'A4', calOrient: 'portrait', calMonthDY: 0, calGridDY: 0,
-  calGuide: false, calGuideMm: 25, calLines: false, calLineMode: 'units', calLineW: 1, calLineDY: 0, calLineColor: '#ecebe4', calYear: new Date().getFullYear(), calMonth: new Date().getMonth() + 1, calLabel: 'full',
+  calDayWeight: 700, calGuide: false, calGuideMm: 25, calLines: false, calLineMode: 'units', calLineW: 1, calLineDY: 0, calLineColor: '#ecebe4', calYear: new Date().getFullYear(), calMonth: new Date().getMonth() + 1, calLabel: 'full',
   calMonthAlign: 'left', calMonthSize: 0.2, calWeekStart: 'sun', calDayAlign: 'center', calDaySize: 0.55,
   calMargin: 6, calGap: 2, calSixWeeks: false, calSun: true, calSat: false, calSpecial: {}, calMonthPalette: false,
   // holiday names under the day numbers: solid text in a font of the user's (outlined in SVG once its data is loaded)
@@ -165,6 +165,7 @@ function applyProject(p, quiet) {
   if (!p || typeof p !== 'object' || !Array.isArray(p.units)) throw new Error('askiical 프로젝트 JSON이 아닙니다.');
   const s = { ...SHAPE_DEFAULTS };
   for (const k of Object.keys(SHAPE_DEFAULTS)) if (k in p && typeof p[k] === typeof SHAPE_DEFAULTS[k]) s[k] = p[k];
+  if (typeof p.calDayWeight !== 'number') s.calDayWeight = s.weight; // projects from before the split weight
   if (typeof p.txt !== 'string' && typeof p.char === 'string') s.txt = p.char; // single-letter projects from before the text tool
   s.txt = s.txt.split('\n').slice(0, 2).join('\n');
   s.glyphs = (Array.isArray(p.glyphs) ? p.glyphs : []).map(AK.normGlyph);
@@ -233,7 +234,7 @@ function dims() {
   if (state.calOn) return Calendar.grid(state);
   return Calendar.grid(state, state.txtPaper, state.txtOrient);
 }
-const letterFontSpec = (px) => `${state.italic ? 'italic ' : ''}${state.weight} ${px}px "${state.font}", serif`;
+const letterFontSpec = (px, weight = state.weight) => `${state.italic ? 'italic ' : ''}${weight} ${px}px "${state.font}", serif`;
 const unitFontSpec = (px) => `${px}px "${state.unitFont}", ui-monospace, monospace`;
 const charPx = (cw, ch) => Math.min(ch * 0.92, cw / 0.6);
 
@@ -282,13 +283,13 @@ function cellCoverage(W, H, cols, rows) {
 }
 
 /* calendar: text metrics per unit of type size, measured large (canvas rounds metrics to whole pixels) */
-function calMeasure() {
-  lctx.font = letterFontSpec(1000);
+function calMeasure(weight = state.weight) {
+  lctx.font = letterFontSpec(1000, weight);
   const ref = lctx.measureText(VREF), zero = lctx.measureText('0');
   const box = { asc: Math.max(zero.fontBoundingBoxAscent ?? 800, ref.actualBoundingBoxAscent) / 1000,
     desc: Math.max(zero.fontBoundingBoxDescent ?? 200, ref.actualBoundingBoxDescent) / 1000 };
   const measure = (t) => {
-    lctx.font = letterFontSpec(1000);
+    lctx.font = letterFontSpec(1000, weight);
     const m = lctx.measureText(t);
     return { left: m.actualBoundingBoxLeft / 1000, right: m.actualBoundingBoxRight / 1000, width: m.width / 1000 };
   };
@@ -298,9 +299,9 @@ function calMeasure() {
 let calCache = { key: '', v: null };
 function calLayout() {
   const key = ['calYear', 'calMonth', 'calLabel', 'calMonthAlign', 'calMonthSize', 'calWeekStart', 'calDayAlign', 'calDaySize',
-    'calPaper', 'calOrient', 'calMonthDY', 'calGridDY', 'calLines', 'calLineW', 'calLineDY', 'calMargin', 'calGap', 'calSixWeeks', 'calSun', 'calSat', 'calHolSpecial', 'font', 'weight', 'italic', 'cellPt', 'cellAspect'].map((k) => state[k]).join('|') +
+    'calPaper', 'calOrient', 'calMonthDY', 'calGridDY', 'calLines', 'calLineW', 'calLineDY', 'calMargin', 'calGap', 'calSixWeeks', 'calSun', 'calSat', 'calHolSpecial', 'font', 'weight', 'calDayWeight', 'italic', 'cellPt', 'cellAspect'].map((k) => state[k]).join('|') +
     '|' + JSON.stringify(state.calSpecial) + '|' + JSON.stringify(state.calHol) + '|' + fontEpoch;
-  if (calCache.key !== key) calCache = { key, v: Calendar.layout(state, calMeasure()) };
+  if (calCache.key !== key) calCache = { key, v: Calendar.layout(state, calMeasure(), calMeasure(state.calDayWeight)) };
   return calCache.v;
 }
 
@@ -311,7 +312,9 @@ function rasterCalendar() {
   const { cols, rows } = lay;
   const key = 'cal|' + calCache.key + '|' + state.calLineMode;
   if (key === rasterKey && coverage) return coverage;
+  const blockWeight = (b) => (b.kind === 'day' ? state.calDayWeight : state.weight); // special days keep the day weight
   ensureFont(letterFontSpec(100), lay.blocks.map((b) => b.text).join(''));
+  ensureFont(letterFontSpec(100, state.calDayWeight), '0123456789');
   const W = cols * SS, H = Math.max(rows, Math.round(rows * state.cellAspect * SS));
   rc.width = W; rc.height = H;
   const sy = H / (rows * state.cellAspect);
@@ -320,7 +323,7 @@ function rasterCalendar() {
     rctx.fillStyle = '#000'; rctx.textAlign = 'left'; rctx.textBaseline = 'alphabetic';
     for (const b of lay.blocks) {
       if (b.style !== style) continue;
-      rctx.font = letterFontSpec(b.size * SS);
+      rctx.font = letterFontSpec(b.size * SS, blockWeight(b));
       rctx.fillText(b.text, b.x * SS, b.y * sy);
     }
     if (style === 'day' && state.calLineMode === 'units') { // rules drawn into the letter field, so units fill them
@@ -1030,6 +1033,7 @@ const SECTIONS = [
   { id: 'source', title: '서체', en: 'TYPEFACE', tool: ['text', 'calendar'], items: [
     { k: 'font', t: 'select', label: '서체', options: () => LETTER_FONTS.map((f) => [f, f]) },
     { k: 'weight', t: 'range', label: '굵기', min: 100, max: 900, step: 100 },
+    { k: 'calDayWeight', t: 'range', label: '굵기 (날짜)', min: 100, max: 900, step: 100, when: cal },
     { k: 'italic', t: 'check', label: '이탤릭' },
     { id: 'font-file', t: 'file', label: '서체 파일 올리기 (.ttf .otf .woff2)', accept: '.ttf,.otf,.woff,.woff2' },
   ] },
@@ -1252,6 +1256,8 @@ function syncControls() {
 function syncVisibility() {
   for (const sec of [...SECTIONS, ...UNIT_SECTIONS]) if (sec.el) sec.el.hidden = !!sec.tool && ![].concat(sec.tool).includes(TOOL);
   for (const it of ALL_ITEMS) if (it.when) it.row.hidden = !it.when(state);
+  const wl = document.querySelector('label[for="c-weight"]');
+  if (wl) wl.textContent = state.calOn ? '굵기 (달 이름)' : '굵기';
 }
 
 /* ---------- colour theme panel */

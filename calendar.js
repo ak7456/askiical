@@ -72,10 +72,12 @@ const Calendar = (() => {
     return out;
   }
 
-  /* layout(s, measure) → { cols, rows, blocks: [{ text, x, y, size, style }] }
+  /* layout(s, measure, dayMeasure) → { cols, rows, blocks: [{ text, x, y, size, style, kind }] }
+     style: colour theme ('month' / 'day'); kind: what the text is ('name' / 'day'), which sets its weight.
+     measure is for the month name, dayMeasure (defaults to measure) for the day numbers, as their weights may differ.
      x / y: text origin and baseline in cell widths; size: type size in cell widths.
      measure(text) → { asc, desc, left, right, width } per 1 unit of type size, plus box: { asc, desc } for the font. */
-  function layout(s, measure) {
+  function layout(s, measure, dayMeasure = measure) {
     const { cols, rows } = grid(s);
     const W = cols, H = rows * s.cellAspect;
     const mg = s.calMargin;
@@ -92,9 +94,10 @@ const Calendar = (() => {
     if (inkW * fm > contentW) fm = contentW / inkW;
     const mBase = mg + (bandH - (box.asc + box.desc) * fm) / 2 + box.asc * fm + (s.calMonthDY || 0) * s.cellAspect;
     const mx = s.calMonthAlign === 'center' ? W / 2 - ((lm.right - lm.left) / 2) * fm : mg + lm.left * fm;
-    blocks.push({ text: label, x: mx, y: mBase, size: fm, style: 'month' });
+    blocks.push({ text: label, x: mx, y: mBase, size: fm, style: 'month', kind: 'name' });
 
-    // day grid
+    // day grid (its own font box: the day weight may differ from the month name's)
+    const dm = dayMeasure, dbox = dm.box();
     const y = s.calYear, m = s.calMonth;
     const days = new Date(y, m, 0).getDate();
     const dow1 = new Date(y, m - 1, 1).getDay(); // 0 = Sunday
@@ -104,8 +107,8 @@ const Calendar = (() => {
     const cellW = contentW / 7, cellH = Math.max(1, (H - mg - top0) / weeks);
     const top = top0 + (s.calGridDY || 0) * s.cellAspect; // moving the table keeps its cell size
     // one type size for every day number: fit the box height, then make sure the widest two digits fit the column
-    let fd = (cellH * s.calDaySize) / (box.asc + box.desc);
-    const wide = Math.max(...['00', '22', '28', '30', '31', '88'].map((t) => { const q = measure(t); return q.right + q.left; }));
+    let fd = (cellH * s.calDaySize) / (dbox.asc + dbox.desc);
+    const wide = Math.max(...['00', '22', '28', '30', '31', '88'].map((t) => { const q = dm(t); return q.right + q.left; }));
     if (wide * fd > cellW * 0.9) fd = (cellW * 0.9) / wide;
     const mk = `${y}-${String(m).padStart(2, '0')}`;
     const special = parseDays((s.calSpecial || {})[mk], days);
@@ -116,19 +119,19 @@ const Calendar = (() => {
     for (let d = 1; d <= days; d++) {
       const i = offset + d - 1, col = i % 7, wk = Math.floor(i / 7);
       const x0 = mg + col * cellW, y0 = top + wk * cellH;
-      const t = String(d), q = measure(t);
+      const t = String(d), q = dm(t);
       let x, base;
       if (s.calDayAlign === 'left') {
         x = x0 + inset + q.left * fd;
-        base = y0 + inset + box.asc * fd;
+        base = y0 + inset + dbox.asc * fd;
       } else {
         x = x0 + cellW / 2 - ((q.right - q.left) / 2) * fd;
-        base = y0 + (cellH - (box.asc + box.desc) * fd) / 2 + box.asc * fd;
+        base = y0 + (cellH - (dbox.asc + dbox.desc) * fd) / 2 + dbox.asc * fd;
       }
       const hol = holidays.get(d);
       const isSpecial = special.has(d) || (s.calSun && col === sunCol) || (s.calSat && col === satCol) || (hol && s.calHolSpecial);
-      blocks.push({ text: t, x, y: base, size: fd, style: isSpecial ? 'month' : 'day' });
-      if (hol) labels.push({ text: hol, d, x: s.calDayAlign === 'left' ? x - q.left * fd : x + ((q.right - q.left) / 2) * fd, top: base + box.desc * fd, align: s.calDayAlign === 'left' ? 'left' : 'center' });
+      blocks.push({ text: t, x, y: base, size: fd, style: isSpecial ? 'month' : 'day', kind: 'day' });
+      if (hol) labels.push({ text: hol, d, x: s.calDayAlign === 'left' ? x - q.left * fd : x + ((q.right - q.left) / 2) * fd, top: base + dbox.desc * fd, align: s.calDayAlign === 'left' ? 'left' : 'center' });
     }
     // horizontal rule above each week row, spanning only the columns that hold a day;
     // t = thickness in cell widths (one cell width = cellPt pt)
