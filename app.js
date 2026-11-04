@@ -46,7 +46,7 @@ const SHAPE_DEFAULTS = {
   charAlign: 'cap', charScale: 1, charWeight: 0, charDX: 0, charDY: 0,
   // calendar mode: one month on an A4 portrait page
   calOn: false, calPaper: 'A4', calOrient: 'portrait', calMonthDY: 0, calGridDY: 0,
-  calLines: false, calLineMode: 'units', calLineW: 1, calLineDY: 0, calLineColor: '#ecebe4', calYear: new Date().getFullYear(), calMonth: new Date().getMonth() + 1, calLabel: 'full',
+  calGuide: false, calGuideMm: 25, calLines: false, calLineMode: 'units', calLineW: 1, calLineDY: 0, calLineColor: '#ecebe4', calYear: new Date().getFullYear(), calMonth: new Date().getMonth() + 1, calLabel: 'full',
   calMonthAlign: 'left', calMonthSize: 0.2, calWeekStart: 'sun', calDayAlign: 'center', calDaySize: 0.55,
   calMargin: 6, calGap: 2, calSixWeeks: false, calSun: true, calSat: false, calSpecial: {}, calMonthPalette: false,
   // holiday names under the day numbers: solid text in a font of the user's (outlined in SVG once its data is loaded)
@@ -783,6 +783,13 @@ function paint(ctx, W, H, ops, px, vp) {
       ctx.fillText(l.text, l.x * cw, l.y * cw);
     }
   }
+  if (vp && state.calOn && state.calGuide) { // guide line from the page top: preview only, never exported
+    const y = ((state.calGuideMm * 72) / 25.4 / state.cellPt) * cw; // mm → pt → cell widths → px
+    ctx.setTransform(1, 0, 0, 1, 0, 0); // one crisp device pixel
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = '#00b4ff';
+    ctx.fillRect(0, Math.round((y - oy) * px), ctx.canvas.width, Math.max(1, Math.round(px)));
+  }
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.globalAlpha = 1;
 }
@@ -984,6 +991,8 @@ const SECTIONS = [
     { k: 'calGap', t: 'range', label: '달 이름과 날짜 사이 (행)', min: -30, max: 30, step: 1, when: cal },
     { k: 'calMonthDY', t: 'range', label: '달 이름 세로 위치 (행)', min: -60, max: 60, step: 0.5, when: cal },
     { k: 'calGridDY', t: 'range', label: '날짜 표 세로 위치 (행)', min: -60, max: 60, step: 0.5, when: cal },
+    { k: 'calGuide', t: 'check', label: '안내선 (미리보기에만, 내보내기에는 없음)', when: cal },
+    { k: 'calGuideMm', t: 'number', label: '안내선 위치 (위에서 mm)', min: 0, max: 700, step: 0.5, when: (s) => cal(s) && s.calGuide },
     { k: 'calLines', t: 'check', label: '각 주 위에 가로선', when: cal },
     { k: 'calLineMode', t: 'seg', label: '선 표현', when: (s) => cal(s) && s.calLines, options: () => opt([['units', '유닛으로 채움'], ['vector', '실선']]) },
     { k: 'calLineW', t: 'range', label: '선 두께', min: 0.25, max: 24, step: 0.25, unit: ' pt', when: (s) => cal(s) && s.calLines },
